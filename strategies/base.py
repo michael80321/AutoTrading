@@ -13,7 +13,7 @@ import pandas as pd
 @dataclass
 class Signal:
     """單一交易信號"""
-    bot_id: int
+    bot_id: str
     bot_name: str
     school: str
     symbol: str
@@ -31,7 +31,7 @@ class Signal:
 @dataclass
 class BotMetrics:
     """機器人績效快照"""
-    bot_id: int
+    bot_id: str
     win_rate: float
     sharpe: float
     max_drawdown: float
@@ -51,9 +51,12 @@ class BaseStrategy(ABC):
     DEFAULT_TIMEFRAME: str = "1H"
     DEFAULT_UNIVERSE: list[str] = []
     
+    REQUIRES_MIN_BARS: int = 200   # 子類可 override(套利/純 context 策略設 0)
+    BYPASS_SL_DIST_CHECK: bool = False  # 套利策略設 True,跳過 0.3~5% 止損距離限制
+
     def __init__(
         self,
-        bot_id: int,
+        bot_id: str,
         name: str,
         initial_capital: float = 300.0,
         fee_rate: float = 0.0004,            # 0.04% taker
@@ -84,15 +87,16 @@ class BaseStrategy(ABC):
     
     def signal(self, data: pd.DataFrame, context: dict | None = None) -> Optional[Signal]:
         """對外統一入口,含風控過濾"""
-        if len(data) < 200:                # 不足歷史拒絕出單
+        if len(data) < self.REQUIRES_MIN_BARS:  # 子類可 override 繞過(套利/純 context 策略)
             return None
         sig = self._generate_signal(data, context or {})
         if sig is None:
             return None
-        # 風控:止損距離不能 < 0.3% (避免 noise),不能 > 5% (避免過寬)
-        sl_dist = abs(sig.entry_price - sig.stop_loss) / sig.entry_price
-        if not (0.003 <= sl_dist <= 0.05):
-            return None
+        if not self.BYPASS_SL_DIST_CHECK:
+            # 風控:止損距離不能 < 0.3% (避免 noise),不能 > 5% (避免過寬)
+            sl_dist = abs(sig.entry_price - sig.stop_loss) / sig.entry_price
+            if not (0.003 <= sl_dist <= 0.05):
+                return None
         return sig
     
     def compute_metrics(self, period_days: int = 30) -> BotMetrics:

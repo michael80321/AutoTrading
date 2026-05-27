@@ -52,10 +52,10 @@ class ConsensusEngine:
             "套利": 1.2, "傳統TA": 0.8, "量化統計": 1.0, "宏觀": 0.9,
             "情緒": 0.7, "AI 元學派": 1.3,
         }
-        # 滾動更新的動態權重 bot_id -> weight
-        self.dynamic_weights: dict[int, float] = {}
+        # 滾動更新的動態權重 bot_id(str) -> weight
+        self.dynamic_weights: dict[str, float] = {}
     
-    def update_weights(self, metrics_snapshots: list[BotMetrics], bot_schools: dict[int, str]):
+    def update_weights(self, metrics_snapshots: list[BotMetrics], bot_schools: dict[str, str]):
         """每日收盤後呼叫一次,根據近 30 天綜合分數更新動態權重"""
         for m in metrics_snapshots:
             school = bot_schools.get(m.bot_id, "Base")
@@ -65,13 +65,13 @@ class ConsensusEngine:
             new_weight = self.ewma_alpha * perf_factor + (1 - self.ewma_alpha) * base
             self.dynamic_weights[m.bot_id] = round(new_weight, 3)
     
-    def get_weight(self, bot_id: int, school: str) -> float:
+    def get_weight(self, bot_id: str, school: str) -> float:
         return self.dynamic_weights.get(bot_id, self.base_weights.get(school, 1.0))
     
     def aggregate(
         self,
         signals: list[Signal],
-        bot_winrates: dict[int, float],
+        bot_winrates: dict[str, float],
         account_equity: float,
         symbol: str,
     ) -> Optional[ConsensusResult]:

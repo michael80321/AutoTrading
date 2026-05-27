@@ -124,11 +124,11 @@ class BacktestEngine:
                 bot_id=bot.bot_id, bot_name=bot.name,
                 period_start=data.index[0] if isinstance(data.index, pd.DatetimeIndex) else datetime.now(),
                 period_end=data.index[-1] if isinstance(data.index, pd.DatetimeIndex) else datetime.now(),
-                total_trades=0, winning_trades=0, win_rate=0, avg_win=0, avg_loss=0,
-                expectancy=0, positive_expectancy=False,
-                sharpe=0, max_drawdown=0, final_equity=equity,
+                total_trades=0, winning_trades=0, win_rate=0.0, avg_win=0.0, avg_loss=0.0,
+                expectancy=0.0, positive_expectancy=False,
+                sharpe=0.0, max_drawdown=0.0, final_equity=float(equity),
                 walk_forward_segments=walk_forward_segments,
-                out_of_sample_consistency=0,
+                out_of_sample_consistency=0.0,
             )
         
         df = pd.DataFrame(all_trades)

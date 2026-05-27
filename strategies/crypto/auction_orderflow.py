@@ -169,6 +169,7 @@ class TempestOrderFlow(BaseStrategy):
     時框 1m/Tick · BTC/ETH
     """
     SCHOOL = "訂單流"
+    REQUIRES_MIN_BARS = 0  # 內部用 delta_window 自行把關,需 buy_volume 欄位
     DEFAULT_TIMEFRAME = "1m"
     DEFAULT_UNIVERSE = ["BTCUSDT", "ETHUSDT"]
     
@@ -236,6 +237,7 @@ class RiptideCVD(BaseStrategy):
     時框 5m · 主流幣 Top 10
     """
     SCHOOL = "訂單流"
+    REQUIRES_MIN_BARS = 0  # 內部用 cvd_lookback 自行把關,需 buy_volume 欄位
     DEFAULT_TIMEFRAME = "5m"
     DEFAULT_UNIVERSE = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT", "XRPUSDT"]
     

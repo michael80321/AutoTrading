@@ -18,6 +18,7 @@ class GlassmindOnChain(BaseStrategy):
     資料來源:Glassnode / CryptoQuant / 自建 indexer
     """
     SCHOOL = "鏈上"
+    REQUIRES_MIN_BARS = 0  # 內部自行檢查 len >= 100
     DEFAULT_TIMEFRAME = "1H"
     DEFAULT_UNIVERSE = ["BTCUSDT", "ETHUSDT"]
     
@@ -89,6 +90,7 @@ class MempoolMEV(BaseStrategy):
     時框 即時 · ETH L2
     """
     SCHOOL = "鏈上"
+    REQUIRES_MIN_BARS = 0  # 內部自行檢查 len >= 50
     DEFAULT_TIMEFRAME = "5m"
     DEFAULT_UNIVERSE = ["ETHUSDT"]
     
@@ -133,6 +135,7 @@ class ArbiterFunding(BaseStrategy):
     時框 8H · Binance/Bybit
     """
     SCHOOL = "套利"
+    REQUIRES_MIN_BARS = 0  # 內部自行檢查 len >= 30
     DEFAULT_TIMEFRAME = "8H"
     DEFAULT_UNIVERSE = ["BTCUSDT", "ETHUSDT"]
     
@@ -194,6 +197,8 @@ class TriadCrossEx(BaseStrategy):
     時框 秒級 · Binance/Bybit/OKX
     """
     SCHOOL = "套利"
+    REQUIRES_MIN_BARS = 0       # 純報價驅動,不依賴 K 線長度
+    BYPASS_SL_DIST_CHECK = True  # 套利止損為執行 timeout,不受 0.3% 下限約束
     DEFAULT_TIMEFRAME = "1m"
     DEFAULT_UNIVERSE = ["BTCUSDT", "ETHUSDT", "ETHBTC"]
     

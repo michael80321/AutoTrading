@@ -9,7 +9,7 @@ import copy
 import json
 from dataclasses import asdict, dataclass
 from datetime import datetime
-from typing import Literal
+from typing import Literal, Optional
 import numpy as np
 from ..strategies.base import BaseStrategy, BotMetrics
 
@@ -17,10 +17,10 @@ from ..strategies.base import BaseStrategy, BotMetrics
 @dataclass
 class EvolutionEvent:
     timestamp: datetime
-    bot_id: int
+    bot_id: str
     bot_name: str
     action: Literal["promote_breed", "demote_sandbox", "retire", "resurrect", "sandbox_pass"]
-    metrics: BotMetrics
+    metrics: Optional[BotMetrics]  # sandbox_pass 時為 None
     note: str
 
 
@@ -46,8 +46,8 @@ class EvolutionManager:
         self.breed_competition_days = breed_competition_days
         
         # 紀錄狀態
-        self.bot_status: dict[int, str] = {}  # active / sandbox / breeding / retired
-        self.consecutive_bottom_count: dict[int, int] = {}
+        self.bot_status: dict[str, str] = {}  # active / sandbox / breeding / retired
+        self.consecutive_bottom_count: dict[str, int] = {}
         self.events: list[EvolutionEvent] = []
     
     def run_cycle(
@@ -115,7 +115,7 @@ class EvolutionManager:
         offspring = []
         for i in range(n_offspring):
             child = copy.deepcopy(parent)
-            child.bot_id = parent.bot_id * 100 + i + 1   # e.g. 1 → 101, 102
+            child.bot_id = f"{parent.bot_id}-子{i+1}"   # e.g. "C01" → "C01-子1"
             child.name = f"{parent.name}-子{i+1}"
             child.params = parent._apply_mutation(mutation_rate=0.1)
             child.capital = 300.0
