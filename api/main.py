@@ -35,40 +35,54 @@ logging.basicConfig(level=logging.INFO)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # ── startup ──
     logger.info("🚀 啟動 AI Trading Collective 後端")
+    tick_task = None
 
-    # Redis
+    # Redis（失敗しても継続）
     redis_url = os.getenv("REDIS_URL", "redis://localhost:6379")
-    state.redis_client = aioredis.from_url(redis_url, decode_responses=True)
     try:
+        state.redis_client = aioredis.from_url(redis_url, decode_responses=True)
         await state.redis_client.ping()
-        logger.info(f"✅ Redis 已連線: {redis_url[:30]}...")
+        logger.info(f"✅ Redis 已連線: {redis_url[:40]}...")
     except Exception as e:
-        logger.warning(f"⚠️  Redis 連線失敗 ({e}),WebSocket pub/sub 不可用但服務繼續啟動")
+        logger.warning(f"⚠️  Redis 連線失敗 ({e}),WebSocket 功能降級")
 
-    # Database (optional — skip gracefully if DATABASE_URL not set)
+    # Database（失敗しても継続）
     db_url = os.getenv("DATABASE_URL", "")
     if db_url:
-        init_db(db_url)
-        logger.info("✅ 資料庫連線初始化完成")
-    else:
-        logger.info("⚠️  DATABASE_URL 未設定,跳過 DB 初始化")
+        try:
+            init_db(db_url)
+            logger.info("✅ 資料庫連線初始化完成")
+        except Exception as e:
+            logger.warning(f"⚠️  DB 初始化失敗 ({e}),跳過")
 
-    # Orchestrator
-    state.orchestrator = DualPoolOrchestrator(SystemConfig())
-    state.orchestrator.initialize()
-    logger.info("✅ DualPoolOrchestrator 初始化完成")
+    # Orchestrator（失敗しても継続）
+    try:
+        state.orchestrator = DualPoolOrchestrator(SystemConfig())
+        state.orchestrator.initialize()
+        logger.info("✅ DualPoolOrchestrator 初始化完成")
+    except Exception as e:
+        logger.error(f"❌ Orchestrator 初始化失敗: {e}", exc_info=True)
 
-    # Feed Manager + tick loop
-    feed_mgr = FeedManager(state.orchestrator, state.redis_client)
-    tick_task = asyncio.create_task(feed_mgr.run_forever())
+    # FeedManager tick loop（失敗しても継続）
+    if state.orchestrator and state.redis_client:
+        try:
+            feed_mgr = FeedManager(state.orchestrator, state.redis_client)
+            tick_task = asyncio.create_task(feed_mgr.run_forever())
+            logger.info("✅ FeedManager 啟動")
+        except Exception as e:
+            logger.error(f"❌ FeedManager 啟動失敗: {e}", exc_info=True)
 
     yield
 
     # ── shutdown ──
-    tick_task.cancel()
-    await state.redis_client.aclose()
+    if tick_task:
+        tick_task.cancel()
+    if state.redis_client:
+        try:
+            await state.redis_client.aclose()
+        except Exception:
+            pass
     logger.info("🛑 後端已關閉")
 
 
@@ -99,6 +113,8 @@ app.include_router(history_router.router, prefix="/api")
 async def health():
     return {
         "status": "ok",
+        "redis": state.redis_client is not None,
+        "orchestrator": state.orchestrator is not None,
         "crypto_bots": len(state.orchestrator.crypto.bots) if state.orchestrator else 0,
         "stock_bots": len(state.orchestrator.stock.bots) if state.orchestrator else 0,
     }
