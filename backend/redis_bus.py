@@ -71,18 +71,24 @@ class RedisBus:
             logger.error(f"Redis publish 失敗: {e}")
 
     async def subscribe_and_forward(self, ws_manager):
-        """訂閱所有頻道並轉發給對應 WebSocket 連線"""
+        """訂閱所有頻道並轉發給對應 WebSocket 連線，斷線自動重連"""
         if not self._connected or not self._client:
             return
-        try:
-            self._pubsub = self._client.pubsub()
-            await self._pubsub.subscribe(*CHANNELS.values())
-            async for message in self._pubsub.listen():
-                if message["type"] != "message":
-                    continue
-                data = json.loads(message["data"])
-                channel = message["channel"]
-                pool = "crypto" if "crypto" in channel else "stock"
-                await ws_manager.broadcast(pool, data)
-        except Exception as e:
-            logger.error(f"Redis subscribe 錯誤: {e}")
+        backoff = 1
+        while self._connected:
+            try:
+                pubsub = self._client.pubsub()
+                await pubsub.subscribe(*CHANNELS.values())
+                backoff = 1
+                async for message in pubsub.listen():
+                    if message["type"] != "message":
+                        continue
+                    data = json.loads(message["data"])
+                    channel = message["channel"]
+                    pool = "crypto" if "crypto" in channel else "stock"
+                    await ws_manager.broadcast(pool, data)
+            except Exception as e:
+                logger.warning(f"Redis subscribe 斷線 ({e})，{backoff}s 後重連")
+                import asyncio
+                await asyncio.sleep(backoff)
+                backoff = min(backoff * 2, 30)
