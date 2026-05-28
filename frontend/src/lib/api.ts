@@ -14,11 +14,14 @@ export interface BotInfo {
   weight: number;
   metrics: {
     win_rate: number;
-    sharpe_ratio: number;
+    sharpe_ratio?: number;
+    sharpe?: number;
     max_drawdown: number;
     composite_score: number;
     total_trades: number;
-    realized_pnl: number;
+    realized_pnl?: number;
+    pnl_pct?: number;
+    [key: string]: number | undefined;
   };
 }
 

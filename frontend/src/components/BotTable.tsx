@@ -31,13 +31,13 @@ export default function BotTable({ bots, pool }: { bots: BotInfo[]; pool: "crypt
               <td className={`py-2 pr-4 font-medium ${accent}`}>{bot.name}</td>
               <td className="py-2 pr-4 text-gray-400">{bot.school}</td>
               <td className="py-2 pr-4 text-right">{(bot.metrics.win_rate * 100).toFixed(1)}%</td>
-              <td className="py-2 pr-4 text-right">{bot.metrics.sharpe_ratio.toFixed(2)}</td>
+              <td className="py-2 pr-4 text-right">{((bot.metrics.sharpe_ratio ?? (bot.metrics as Record<string,number>).sharpe ?? 0)).toFixed(2)}</td>
               <td className="py-2 pr-4 text-right text-red-400">
                 {(bot.metrics.max_drawdown * 100).toFixed(1)}%
               </td>
               <td className="py-2 pr-4 text-right">{bot.weight.toFixed(2)}</td>
-              <td className={`py-2 pr-4 text-right ${bot.metrics.realized_pnl >= 0 ? "text-green-400" : "text-red-400"}`}>
-                ${bot.metrics.realized_pnl.toFixed(2)}
+              <td className={`py-2 pr-4 text-right ${((bot.metrics.realized_pnl ?? (bot.metrics as Record<string,number>).pnl_pct ?? 0)) >= 0 ? "text-green-400" : "text-red-400"}`}>
+                ${((bot.metrics.realized_pnl ?? (bot.metrics as Record<string,number>).pnl_pct ?? 0)).toFixed(2)}
               </td>
               <td className={`py-2 text-right ${STATUS_COLOR[bot.status] ?? "text-gray-400"}`}>
                 {bot.status}
