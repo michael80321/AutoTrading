@@ -44,12 +44,16 @@ class VolterraAuction(BaseStrategy):
         while cum < target and (lo > 0 or hi < len(hist)-1):
             left = hist[lo-1] if lo > 0 else 0
             right = hist[hi+1] if hi < len(hist)-1 else 0
-            if left >= right:
+            if left == 0 and right == 0:
+                break
+            if left >= right and lo > 0:
                 lo -= 1
                 cum += left
-            else:
+            elif hi < len(hist) - 1:
                 hi += 1
                 cum += right
+            else:
+                break
         val = edges[lo]
         vah = edges[hi+1]
         return poc, vah, val

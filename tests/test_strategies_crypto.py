@@ -189,10 +189,11 @@ def test_meta_ensemble_with_sub_signals(flat_300, mean_rev_long_300):
     from datetime import datetime
 
     bot = MetaEnsemble(bot_id="C18", name="Meta", initial_capital=0.0)
+    # prices aligned with flat_300 default (start_price=50000, last close ~46919)
     sub = [
-        Sig("C13","Bayes","量化統計","BTCUSDT","LONG",49700,49500,[50000],0.8,"1H",datetime.now(),"z低"),
-        Sig("C15","Macro","宏觀","BTCUSDT","LONG",49700,49400,[50200],0.7,"1D",datetime.now(),"risk-on"),
-        Sig("C16","Pulse","情緒","BTCUSDT","LONG",49700,49450,[50100],0.6,"1H",datetime.now(),"sentiment"),
+        Sig("C13","Bayes","量化統計","BTCUSDT","LONG",46900,46100,[47800],0.8,"1H",datetime.now(),"z低"),
+        Sig("C15","Macro","宏觀","BTCUSDT","LONG",46900,46000,[47900],0.7,"1D",datetime.now(),"risk-on"),
+        Sig("C16","Pulse","情緒","BTCUSDT","LONG",46900,46100,[47700],0.6,"1H",datetime.now(),"sentiment"),
     ]
     ctx = {
         "symbol": "BTCUSDT",
