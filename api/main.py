@@ -23,7 +23,9 @@ from AutoTrading.main import DualPoolOrchestrator
 from AutoTrading.config.system import SystemConfig
 import AutoTrading.api.state as state
 from AutoTrading.api.routers import snapshot as snapshot_router
+from AutoTrading.api.routers import history as history_router
 from AutoTrading.data.feed_manager import FeedManager
+from db.database import init_db
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
@@ -41,6 +43,14 @@ async def lifespan(app: FastAPI):
     state.redis_client = aioredis.from_url(redis_url, decode_responses=True)
     await state.redis_client.ping()
     logger.info(f"✅ Redis 已連線: {redis_url[:30]}...")
+
+    # Database (optional — skip gracefully if DATABASE_URL not set)
+    db_url = os.getenv("DATABASE_URL", "")
+    if db_url:
+        init_db(db_url)
+        logger.info("✅ 資料庫連線初始化完成")
+    else:
+        logger.info("⚠️  DATABASE_URL 未設定,跳過 DB 初始化")
 
     # Orchestrator
     state.orchestrator = DualPoolOrchestrator(SystemConfig())
@@ -77,6 +87,7 @@ app.add_middleware(
 )
 
 app.include_router(snapshot_router.router, prefix="/api")
+app.include_router(history_router.router, prefix="/api")
 
 
 # ─── health ──────────────────────────────────────────────────────────────────
