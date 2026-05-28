@@ -1,6 +1,9 @@
 [phases.setup]
 nixPkgs = ["python311", "python311Packages.pip"]
 
+[phases.build]
+cmds = ["ln -sf $(pwd) AutoTrading"]
+
 [phases.install]
 cmds = ["pip install -r requirements.txt"]
 

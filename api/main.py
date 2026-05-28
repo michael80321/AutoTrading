@@ -41,8 +41,11 @@ async def lifespan(app: FastAPI):
     # Redis
     redis_url = os.getenv("REDIS_URL", "redis://localhost:6379")
     state.redis_client = aioredis.from_url(redis_url, decode_responses=True)
-    await state.redis_client.ping()
-    logger.info(f"✅ Redis 已連線: {redis_url[:30]}...")
+    try:
+        await state.redis_client.ping()
+        logger.info(f"✅ Redis 已連線: {redis_url[:30]}...")
+    except Exception as e:
+        logger.warning(f"⚠️  Redis 連線失敗 ({e}),WebSocket pub/sub 不可用但服務繼續啟動")
 
     # Database (optional — skip gracefully if DATABASE_URL not set)
     db_url = os.getenv("DATABASE_URL", "")
