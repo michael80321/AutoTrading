@@ -1,17 +1,13 @@
 """
 後端啟動腳本
-python backend/server.py
+python -m autotrading.backend.server
 或
-uvicorn backend.app:app --reload --port 8000
+uvicorn autotrading.backend.app:app --port 8000
 """
 import asyncio
 import logging
 import os
-import sys
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
-
-# 載入 .env
 try:
     from dotenv import load_dotenv
     load_dotenv()
@@ -24,7 +20,7 @@ logging.basicConfig(
 )
 
 import uvicorn
-from backend.db.session import init_db
+from autotrading.backend.db.session import init_db
 
 
 async def startup():
@@ -35,7 +31,7 @@ async def startup():
 if __name__ == "__main__":
     asyncio.run(startup())
     uvicorn.run(
-        "backend.app:app",
+        "autotrading.backend.app:app",
         host="0.0.0.0",
         port=int(os.getenv("PORT", "8000")),
         reload=os.getenv("ENV", "production") == "development",

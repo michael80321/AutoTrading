@@ -24,8 +24,11 @@ logger = logging.getLogger(__name__)
 
 
 def load_strategy_class(module_path: str, class_name: str):
-    """動態載入策略類別"""
-    module = importlib.import_module(f"ai_trading_collective.{module_path}")
+    pkg = __package__  # 'autotrading' when installed, None when run as __main__
+    if pkg:
+        module = importlib.import_module(f".{module_path}", package=pkg)
+    else:
+        module = importlib.import_module(module_path)
     return getattr(module, class_name)
 
 
