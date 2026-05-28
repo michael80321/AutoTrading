@@ -4,6 +4,9 @@ WORKDIR /workspace
 
 RUN apt-get update && apt-get install -y --no-install-recommends gcc && rm -rf /var/lib/apt/lists/*
 
+# 升級 pip + setuptools 避免舊版 build-backend 問題
+RUN pip install --upgrade pip setuptools
+
 # 先複製依賴定義，利用 Docker layer cache
 COPY requirements.txt pyproject.toml ./
 
