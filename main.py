@@ -7,6 +7,7 @@
 import asyncio
 import importlib
 import logging
+import os
 from datetime import datetime
 from typing import Literal
 import pandas as pd
@@ -70,12 +71,29 @@ class PoolCollective:
         
         # 各池獨立的執行路由 — 只用對應的 broker
         if pool_name == "crypto":
+            binance_client = None
+            api_key = os.getenv("BINANCE_API_KEY")
+            api_secret = os.getenv("BINANCE_SECRET")
+            if api_key and api_secret:
+                try:
+                    import ccxt.async_support as ccxt_async
+                    binance_client = ccxt_async.binance({
+                        "apiKey": api_key,
+                        "secret": api_secret,
+                        "enableRateLimit": True,
+                    })
+                    logger.info("✅ Binance client 初始化成功")
+                except Exception as e:
+                    logger.warning(f"Binance client 初始化失敗: {e}")
+            else:
+                logger.info("BINANCE_API_KEY 未設定，以 DRY-RUN 模式運行")
             self.router = ExecutionRouter(
                 crypto_pool_usdt=config.capital.crypto_pool_total,
-                stock_pool_usd=0,  # 此池不操作美股
+                stock_pool_usd=0,
                 fee_rate_crypto=config.capital.fee_rate_crypto,
                 fee_rate_stock=0,
                 max_concurrent_positions=config.max_concurrent_positions_per_pool,
+                binance_client=binance_client,
             )
         else:
             self.router = ExecutionRouter(
@@ -270,6 +288,21 @@ class DualPoolOrchestrator:
         logger.info(f"✅ 雙池啟動完成")
         logger.info(f"   加密池:{len(self.crypto.bots)} 席 + Meta · ${self.config.capital.crypto_pool_total}")
         logger.info(f"   美股池:{len(self.stock.bots)} 席 + Meta · ${self.config.capital.stock_pool_total}")
+        # 啟動 TP1 背景輪詢（需要在事件循環中呼叫）
+        try:
+            asyncio.get_running_loop()
+            asyncio.create_task(self._tp1_polling_loop())
+        except RuntimeError:
+            pass  # 若在同步環境呼叫，跳過（lifespan 會處理）
+
+    async def _tp1_polling_loop(self):
+        """每 30 秒自動檢查並執行 TP1 止盈"""
+        while True:
+            try:
+                await self.crypto.router.check_tp1_and_close()
+            except Exception as e:
+                logger.error(f"TP1 輪詢失敗: {e}")
+            await asyncio.sleep(30)
     
     async def tick_both(
         self,

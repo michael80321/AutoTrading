@@ -30,6 +30,10 @@ async def lifespan(app: FastAPI):
     await redis_bus.connect()
     asyncio.create_task(redis_bus.subscribe_and_forward(ws_manager))
     logger.info("✅ Redis bus 已連線")
+    # 初始化協調器（包含 Binance client）並啟動 TP1 背景輪詢
+    from .api.deps import get_orchestrator
+    orch = get_orchestrator()
+    asyncio.create_task(orch._tp1_polling_loop())
     yield
     await redis_bus.disconnect()
 
