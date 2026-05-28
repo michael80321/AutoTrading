@@ -1,0 +1,18 @@
+# Core
+fastapi==0.115.0
+uvicorn[standard]==0.30.6
+redis[asyncio]==5.0.8
+pydantic-settings==2.4.0
+python-dotenv==1.0.1
+
+# Trading engine
+numpy==2.4.6
+pandas==3.0.3
+scikit-learn==1.8.0
+lightgbm==4.6.0
+
+# Broker feeds
+ccxt==4.4.19
+
+# Optional (IBKR — local only, install manually)
+# ib_insync==0.9.86
