@@ -2,7 +2,8 @@
 加密池 REST API
 GET /api/crypto/snapshot     — 完整池子快照 (bots + portfolio + chat)
 GET /api/crypto/bots         — 18 席狀態列表
-GET /api/crypto/portfolio    — 倉位 + P&L
+GET /api/crypto/portfolio    — 倉位 + P&L + 即時餘額 + 開放倉位明細
+GET /api/crypto/positions    — 開放倉位列表
 GET /api/crypto/chat         — 最新 100 則聊天室訊息
 GET /api/crypto/evolution    — 進化事件紀錄
 """
@@ -25,7 +26,21 @@ async def crypto_bots(orchestrator=Depends(get_orchestrator)):
 
 @router.get("/portfolio")
 async def crypto_portfolio(orchestrator=Depends(get_orchestrator)):
-    return orchestrator.crypto.router.get_portfolio_snapshot()["crypto_pool"]
+    router_ = orchestrator.crypto.router
+    # 拉即時 Binance 餘額
+    await router_.fetch_binance_balance()
+    return router_.get_portfolio_snapshot()["crypto_pool"]
+
+
+@router.get("/positions")
+async def crypto_positions(orchestrator=Depends(get_orchestrator)):
+    router_ = orchestrator.crypto.router
+    positions = [
+        router_._order_to_dict(o)
+        for o in router_.open_orders.values()
+        if o.pool == "crypto"
+    ]
+    return {"positions": positions, "count": len(positions)}
 
 
 @router.get("/chat")

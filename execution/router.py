@@ -208,17 +208,91 @@ class ExecutionRouter:
     
     def get_portfolio_snapshot(self) -> dict:
         """給前端 dashboard 用"""
+        crypto_orders = [o for o in self.open_orders.values() if o.pool == "crypto"]
+        stock_orders = [o for o in self.open_orders.values() if o.pool == "stock"]
         return {
             "crypto_pool": {
                 "total": self.crypto_pool,
                 "available": self._available_capital("crypto"),
-                "open_positions": len([o for o in self.open_orders.values() if o.pool == "crypto"]),
+                "open_positions": len(crypto_orders),
                 "realized_pnl": sum(o.realized_pnl for o in self.closed_orders if o.pool == "crypto"),
+                "positions": [self._order_to_dict(o) for o in crypto_orders],
             },
             "stock_pool": {
                 "total": self.stock_pool,
                 "available": self._available_capital("stock"),
-                "open_positions": len([o for o in self.open_orders.values() if o.pool == "stock"]),
+                "open_positions": len(stock_orders),
                 "realized_pnl": sum(o.realized_pnl for o in self.closed_orders if o.pool == "stock"),
+                "positions": [self._order_to_dict(o) for o in stock_orders],
             },
         }
+
+    def _order_to_dict(self, o: "ExecutionOrder") -> dict:
+        tp1 = o.take_profit[0] if o.take_profit else None
+        tp2 = o.take_profit[1] if len(o.take_profit) > 1 else None
+        notional = o.qty * o.entry_price
+        return {
+            "order_id": o.order_id,
+            "symbol": o.symbol,
+            "side": o.side,
+            "qty": o.qty,
+            "entry_price": o.entry_price,
+            "stop_loss": o.stop_loss,
+            "tp1": tp1,
+            "tp2": tp2,
+            "tp1_filled": o.status == OrderStatus.PARTIALLY_FILLED,
+            "status": o.status.value,
+            "entry_time": o.submitted_at.isoformat() if o.submitted_at else None,
+            "filled_time": o.filled_at.isoformat() if o.filled_at else None,
+            "notional_usdt": round(notional, 2),
+            "consensus_score": o.consensus_score,
+            "contributors": o.contributors,
+        }
+
+    async def fetch_binance_balance(self) -> Optional[float]:
+        """從 Binance 拉即時 USDT 餘額，更新 crypto_pool"""
+        if self.binance is None:
+            return None
+        try:
+            balance = await self.binance.fetch_balance()
+            usdt = balance.get("USDT", {}).get("free", None)
+            if usdt is not None:
+                self.crypto_pool = float(usdt)
+                logger.info(f"✅ Binance 餘額更新: {usdt:.2f} USDT")
+            return usdt
+        except Exception as e:
+            logger.error(f"Binance 餘額拉取失敗: {e}")
+            return None
+
+    async def check_tp1_and_close(self):
+        """檢查開放倉位，TP1 達到時強制平倉 50%"""
+        if self.binance is None:
+            return
+        for order_id, order in list(self.open_orders.items()):
+            if order.pool != "crypto" or not order.take_profit:
+                continue
+            if order.status == OrderStatus.PARTIALLY_FILLED:
+                continue  # 已經觸發過 TP1
+            try:
+                ticker = await self.binance.fetch_ticker(order.symbol)
+                current_price = ticker["last"]
+                tp1 = order.take_profit[0]
+                if order.side == "LONG" and current_price >= tp1:
+                    await self._execute_tp1(order, current_price)
+                elif order.side == "SHORT" and current_price <= tp1:
+                    await self._execute_tp1(order, current_price)
+            except Exception as e:
+                logger.error(f"TP1 檢查失敗 {order.symbol}: {e}")
+
+    async def _execute_tp1(self, order: "ExecutionOrder", price: float):
+        """執行 TP1 — 平倉 50% 並標記"""
+        tp1_qty = round(order.qty * order.tp_split[0], 6)
+        try:
+            side = "sell" if order.side == "LONG" else "buy"
+            await self.binance.create_market_order(order.symbol, side, tp1_qty)
+            order.status = OrderStatus.PARTIALLY_FILLED
+            pnl = (price - order.entry_price) * tp1_qty * (1 if order.side == "LONG" else -1)
+            order.realized_pnl += pnl - tp1_qty * price * self.fee_rate_crypto
+            logger.info(f"✅ TP1 止盈 {order.symbol} qty={tp1_qty} price={price} PnL={pnl:.2f}")
+        except Exception as e:
+            logger.error(f"TP1 執行失敗 {order.symbol}: {e}")
