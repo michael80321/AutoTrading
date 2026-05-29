@@ -71,29 +71,43 @@ class PoolCollective:
         
         # 各池獨立的執行路由 — 只用對應的 broker
         if pool_name == "crypto":
-            binance_client = None
-            api_key = os.getenv("BINANCE_API_KEY")
-            api_secret = os.getenv("BINANCE_SECRET")
-            if api_key and api_secret:
+            exchange_client = None
+            # 優先 Bybit（Railway US 伺服器不被封鎖），其次 Binance
+            bybit_key = os.getenv("BYBIT_API_KEY")
+            bybit_secret = os.getenv("BYBIT_SECRET")
+            binance_key = os.getenv("BINANCE_API_KEY")
+            binance_secret = os.getenv("BINANCE_SECRET")
+            if bybit_key and bybit_secret:
                 try:
                     import ccxt.async_support as ccxt_async
-                    binance_client = ccxt_async.binance({
-                        "apiKey": api_key,
-                        "secret": api_secret,
+                    exchange_client = ccxt_async.bybit({
+                        "apiKey": bybit_key,
+                        "secret": bybit_secret,
                         "enableRateLimit": True,
                     })
-                    logger.info("✅ Binance client 初始化成功")
+                    logger.info("✅ Bybit client 初始化成功")
+                except Exception as e:
+                    logger.warning(f"Bybit client 初始化失敗: {e}")
+            elif binance_key and binance_secret:
+                try:
+                    import ccxt.async_support as ccxt_async
+                    exchange_client = ccxt_async.binance({
+                        "apiKey": binance_key,
+                        "secret": binance_secret,
+                        "enableRateLimit": True,
+                    })
+                    logger.info("✅ Binance client 初始化成功（注意：Railway US 可能無法連線）")
                 except Exception as e:
                     logger.warning(f"Binance client 初始化失敗: {e}")
             else:
-                logger.info("BINANCE_API_KEY 未設定，以 DRY-RUN 模式運行")
+                logger.info("未設定交易所 KEY，以 DRY-RUN 模式運行")
             self.router = ExecutionRouter(
                 crypto_pool_usdt=config.capital.crypto_pool_total,
                 stock_pool_usd=0,
                 fee_rate_crypto=config.capital.fee_rate_crypto,
                 fee_rate_stock=0,
                 max_concurrent_positions=config.max_concurrent_positions_per_pool,
-                binance_client=binance_client,
+                binance_client=exchange_client,
             )
         else:
             ibkr_client = None

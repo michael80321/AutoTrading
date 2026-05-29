@@ -63,11 +63,13 @@ async def debug_status(orchestrator=Depends(get_orchestrator)):
     binance_ok = False
     try:
         async with httpx.AsyncClient() as c:
-            r = await c.get("https://api.binance.com/api/v3/ping", timeout=5.0)
+            r = await c.get("https://api.bybit.com/v5/market/time", timeout=5.0)
             binance_ok = r.status_code == 200
     except Exception:
         pass
 
+    exchange = orchestrator.crypto.router.binance
+    exchange_name = type(exchange).__name__ if exchange else "none"
     return {
         "crypto_bots": len(orchestrator.crypto.bots),
         "stock_bots": len(orchestrator.stock.bots),
@@ -75,7 +77,8 @@ async def debug_status(orchestrator=Depends(get_orchestrator)):
         "stock_chat_messages": len(orchestrator.stock.chat_messages),
         "crypto_open_positions": len(orchestrator.crypto.router.open_orders),
         "crypto_pool_usdt": orchestrator.crypto.router.crypto_pool,
-        "binance_client_connected": orchestrator.crypto.router.binance is not None,
-        "binance_api_reachable": binance_ok,
+        "exchange_client": exchange_name,
+        "exchange_connected": exchange is not None,
+        "bybit_api_reachable": binance_ok,
         "ibkr_client_connected": orchestrator.stock.router.ibkr is not None,
     }

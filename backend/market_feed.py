@@ -1,7 +1,7 @@
 """
 市場數據背景餵送
-- 加密池：每 60 秒從 Binance 公開 API 抓 OHLCV
-- 美股池：每 300 秒用 yfinance 抓 OHLCV（盤中每分鐘更新）
+- 加密池：每 60 秒從 Bybit 公開 API 抓 OHLCV（Binance 在 Railway US 被封鎖）
+- 美股池：每 300 秒用 yfinance 抓 OHLCV
 """
 import asyncio
 import logging
@@ -12,30 +12,37 @@ import pandas as pd
 
 logger = logging.getLogger(__name__)
 
-# 加密池監控的標的（各學派都有用到的 symbol）
 CRYPTO_SYMBOLS = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT"]
-OHLCV_LIMIT = 300  # 每次抓 300 根 K 線，供策略計算指標用
+OHLCV_LIMIT = 300
 TIMEFRAME = "1h"
 
-BINANCE_KLINE_URL = "https://api.binance.com/api/v3/klines"
+# Bybit 公開 K 線 API（不需授權，不封鎖美國 IP）
+BYBIT_KLINE_URL = "https://api.bybit.com/v5/market/kline"
 
 
-async def fetch_ohlcv(client: httpx.AsyncClient, symbol: str, interval: str = "1h", limit: int = 300) -> pd.DataFrame | None:
+async def fetch_ohlcv(client: httpx.AsyncClient, symbol: str, interval: str = "60", limit: int = 300) -> pd.DataFrame | None:
+    """從 Bybit 抓 OHLCV。interval 單位為分鐘（60=1H）。"""
     try:
-        params = {"symbol": symbol, "interval": interval, "limit": limit}
-        resp = await client.get(BINANCE_KLINE_URL, params=params, timeout=10.0)
+        params = {
+            "category": "linear",
+            "symbol": symbol,
+            "interval": interval,
+            "limit": limit,
+        }
+        resp = await client.get(BYBIT_KLINE_URL, params=params, timeout=10.0)
         if resp.status_code != 200:
-            logger.warning(f"Binance kline {symbol} HTTP {resp.status_code}")
+            logger.warning(f"Bybit kline {symbol} HTTP {resp.status_code}")
             return None
-        raw = resp.json()
-        df = pd.DataFrame(raw, columns=[
-            "open_time", "open", "high", "low", "close", "volume",
-            "close_time", "quote_volume", "trades", "taker_buy_base",
-            "taker_buy_quote", "ignore",
-        ])
+        body = resp.json()
+        if body.get("retCode") != 0:
+            logger.warning(f"Bybit kline {symbol} error: {body.get('retMsg')}")
+            return None
+        # Bybit 回傳最新在前，需反轉；欄位: [startTime, open, high, low, close, volume, turnover]
+        rows = body["result"]["list"][::-1]
+        df = pd.DataFrame(rows, columns=["open_time", "open", "high", "low", "close", "volume", "turnover"])
         for col in ["open", "high", "low", "close", "volume"]:
             df[col] = df[col].astype(float)
-        df["open_time"] = pd.to_datetime(df["open_time"], unit="ms", utc=True)
+        df["open_time"] = pd.to_datetime(df["open_time"].astype(float), unit="ms", utc=True)
         df.set_index("open_time", inplace=True)
         return df
     except Exception as e:
