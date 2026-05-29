@@ -35,11 +35,21 @@ async def lifespan(app: FastAPI):
     from .api.deps import get_orchestrator
     orch = get_orchestrator()
     await orch.connect_brokers()
-    # 啟動背景任務
-    asyncio.create_task(orch._tp1_polling_loop())
-    asyncio.create_task(market_tick_loop(orch, redis_bus, interval_seconds=60))
-    asyncio.create_task(stock_tick_loop(orch, redis_bus, interval_seconds=300))
+    # 保留強引用，防止 asyncio GC 在任務執行前回收
+    _bg_tasks = set()
+    for coro in [
+        orch._tp1_polling_loop(),
+        market_tick_loop(orch, redis_bus, interval_seconds=60),
+        stock_tick_loop(orch, redis_bus, interval_seconds=300),
+    ]:
+        t = asyncio.create_task(coro)
+        _bg_tasks.add(t)
+        t.add_done_callback(_bg_tasks.discard)
+    app.state.bg_tasks = _bg_tasks  # 掛到 app.state 確保生命週期夠長
+    logger.info(f"✅ 已啟動 {len(_bg_tasks)} 個背景任務")
     yield
+    for t in _bg_tasks:
+        t.cancel()
     await redis_bus.disconnect()
 
 
