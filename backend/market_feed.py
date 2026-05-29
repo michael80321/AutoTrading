@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 
 CRYPTO_SYMBOLS = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT"]
 OHLCV_LIMIT = 300
-TIMEFRAME = "1h"
+TIMEFRAME = "60"  # Bybit interval 用分鐘數，"1h" 無效
 
 BINANCE_KLINE_URL = "https://api.binance.com/api/v3/klines"
 
