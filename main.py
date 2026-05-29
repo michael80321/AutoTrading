@@ -96,12 +96,28 @@ class PoolCollective:
                 binance_client=binance_client,
             )
         else:
+            ibkr_client = None
+            ibkr_host = os.getenv("IBKR_HOST")
+            if ibkr_host:
+                try:
+                    from ib_insync import IB
+                    ibkr_client = IB()
+                    # 儲存連線參數，等待 lifespan 中非同步連線
+                    self._ibkr_host = ibkr_host
+                    self._ibkr_port = int(os.getenv("IBKR_PORT", "4001"))
+                    self._ibkr_client_id = int(os.getenv("IBKR_CLIENT_ID", "1"))
+                    logger.info(f"IBKR client 準備好，等待連線到 {ibkr_host}:{self._ibkr_port}")
+                except Exception as e:
+                    logger.warning(f"IBKR 初始化失敗: {e}")
+            else:
+                logger.info("IBKR_HOST 未設定，美股池以 DRY-RUN 模式運行")
             self.router = ExecutionRouter(
                 crypto_pool_usdt=0,
                 stock_pool_usd=config.capital.stock_pool_total,
                 fee_rate_crypto=0,
                 fee_rate_stock=config.capital.fee_rate_stock,
                 max_concurrent_positions=config.max_concurrent_positions_per_pool,
+                ibkr_client=ibkr_client,
             )
         
         fee = config.capital.fee_rate_crypto if pool_name == "crypto" else config.capital.fee_rate_stock
@@ -333,6 +349,22 @@ class DualPoolOrchestrator:
         self.stock = PoolCollective("stock", self.config, STOCK_ROSTER, META_EQ)
         self.cross_pool_warnings: list[dict] = []
     
+    async def connect_brokers(self):
+        """非同步連接所有 broker（在 FastAPI lifespan 中呼叫）"""
+        stock_pool = self.stock
+        if (hasattr(stock_pool, "_ibkr_host") and stock_pool.router.ibkr is not None):
+            try:
+                await stock_pool.router.ibkr.connectAsync(
+                    stock_pool._ibkr_host,
+                    stock_pool._ibkr_port,
+                    clientId=stock_pool._ibkr_client_id,
+                    timeout=15,
+                )
+                logger.info(f"✅ IBKR 連線成功 ({stock_pool._ibkr_host}:{stock_pool._ibkr_port})")
+            except Exception as e:
+                logger.error(f"IBKR 連線失敗: {e}，降級為 DRY-RUN")
+                stock_pool.router.ibkr = None
+
     def initialize(self):
         self.crypto.initialize_bots()
         self.stock.initialize_bots()

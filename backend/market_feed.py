@@ -1,6 +1,7 @@
 """
-市場數據背景餵送 — 每分鐘從 Binance 抓 OHLCV，驅動 18 席分析師 tick
-無 API key 時使用公開 REST endpoint（K 線不需授權）
+市場數據背景餵送
+- 加密池：每 60 秒從 Binance 公開 API 抓 OHLCV
+- 美股池：每 300 秒用 yfinance 抓 OHLCV（盤中每分鐘更新）
 """
 import asyncio
 import logging
@@ -80,3 +81,66 @@ async def market_tick_loop(orchestrator, redis_bus, interval_seconds: int = 60):
                 logger.error(f"market_tick_loop 錯誤: {e}")
 
             await asyncio.sleep(interval_seconds)
+
+
+# ── 美股池 ────────────────────────────────────────────────────────────────────
+
+STOCK_SYMBOLS = ["SPY", "QQQ", "AAPL", "MSFT", "NVDA", "TSLA"]
+
+
+async def fetch_stock_ohlcv(symbol: str, period: str = "3mo", interval: str = "1h") -> pd.DataFrame | None:
+    """用 yfinance 抓股票 OHLCV（在 executor 中執行，避免阻塞事件循環）"""
+    try:
+        import yfinance as yf
+        loop = asyncio.get_event_loop()
+        df = await loop.run_in_executor(
+            None,
+            lambda: yf.download(symbol, period=period, interval=interval,
+                                 progress=False, auto_adjust=True),
+        )
+        if df is None or len(df) < 10:
+            return None
+        df.columns = [c.lower() for c in df.columns]
+        df.index.name = "open_time"
+        return df
+    except Exception as e:
+        logger.error(f"fetch_stock_ohlcv {symbol} 失敗: {e}")
+        return None
+
+
+async def stock_tick_loop(orchestrator, redis_bus, interval_seconds: int = 300):
+    """
+    每 interval_seconds 秒：
+    1. 用 yfinance 抓美股 OHLCV
+    2. 呼叫 stock pool tick()，讓 18 席美股分析師產生訊號 + 聊天
+    3. 推送新訊息到 Redis → WebSocket
+    """
+    logger.info("📡 美股市場數據背景任務啟動")
+    last_chat_len = 0
+    while True:
+        try:
+            market_data: dict[str, pd.DataFrame] = {}
+            for symbol in STOCK_SYMBOLS:
+                df = await fetch_stock_ohlcv(symbol)
+                if df is not None and len(df) >= 200:
+                    market_data[symbol] = df
+
+            if market_data:
+                context = {
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                    "timeframe": "1H",
+                }
+                await orchestrator.stock.tick(market_data, context)
+
+                new_msgs = orchestrator.stock.chat_messages[last_chat_len:]
+                for msg in new_msgs:
+                    await redis_bus.publish("stock", msg)
+                last_chat_len = len(orchestrator.stock.chat_messages)
+
+                logger.info(f"✅ 美股 tick 完成 新訊息={len(new_msgs)} 總聊天={last_chat_len}")
+            else:
+                logger.warning("⚠️ 美股本輪沒有可用數據，跳過 tick")
+        except Exception as e:
+            logger.error(f"stock_tick_loop 錯誤: {e}")
+
+        await asyncio.sleep(interval_seconds)

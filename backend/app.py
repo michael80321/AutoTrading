@@ -18,7 +18,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from .redis_bus import RedisBus
 from .ws_manager import ConnectionManager
 from .api import crypto_router, stock_router, system_router
-from .market_feed import market_tick_loop
+from .market_feed import market_tick_loop, stock_tick_loop
 
 logger = logging.getLogger(__name__)
 
@@ -31,11 +31,14 @@ async def lifespan(app: FastAPI):
     await redis_bus.connect()
     asyncio.create_task(redis_bus.subscribe_and_forward(ws_manager))
     logger.info("✅ Redis bus 已連線")
-    # 初始化協調器（包含 Binance client）並啟動背景任務
+    # 初始化協調器並連接 brokers
     from .api.deps import get_orchestrator
     orch = get_orchestrator()
+    await orch.connect_brokers()
+    # 啟動背景任務
     asyncio.create_task(orch._tp1_polling_loop())
     asyncio.create_task(market_tick_loop(orch, redis_bus, interval_seconds=60))
+    asyncio.create_task(stock_tick_loop(orch, redis_bus, interval_seconds=300))
     yield
     await redis_bus.disconnect()
 

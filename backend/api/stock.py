@@ -28,6 +28,17 @@ async def stock_portfolio(orchestrator=Depends(get_orchestrator)):
     return orchestrator.stock.router.get_portfolio_snapshot()["stock_pool"]
 
 
+@router.get("/positions")
+async def stock_positions(orchestrator=Depends(get_orchestrator)):
+    router_ = orchestrator.stock.router
+    positions = [
+        router_._order_to_dict(o)
+        for o in router_.open_orders.values()
+        if o.pool == "stock"
+    ]
+    return {"positions": positions, "count": len(positions)}
+
+
 @router.get("/chat")
 async def stock_chat(limit: int = 100, orchestrator=Depends(get_orchestrator)):
     msgs = orchestrator.stock.chat_messages
