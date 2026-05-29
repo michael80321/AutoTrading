@@ -42,15 +42,9 @@ async def fetch_ohlcv(client: httpx.AsyncClient, symbol: str, interval: str = "1
         return None
 
 
-async def market_tick_loop(orchestrator, redis_bus, interval_seconds: int = 60):
-    """
-    每 interval_seconds 秒：
-    1. 從 Binance 公開 API 抓最新 OHLCV
-    2. 呼叫 crypto pool tick()，讓 18 席分析師產生訊號 + 聊天
-    3. 將新產生的聊天訊息推送到 Redis → WebSocket
-    """
+async def market_tick_loop(orchestrator, interval_seconds: int = 60):
+    """每 interval_seconds 秒抓 Binance OHLCV → crypto tick() → 更新即時餘額。"""
     logger.info("📡 加密市場數據背景任務啟動")
-    last_chat_len = 0
     async with httpx.AsyncClient() as client:
         while True:
             try:
@@ -66,13 +60,12 @@ async def market_tick_loop(orchestrator, redis_bus, interval_seconds: int = 60):
                         "timeframe": TIMEFRAME,
                     }
                     await orchestrator.crypto.tick(market_data, context)
-
-                    new_msgs = orchestrator.crypto.chat_messages[last_chat_len:]
-                    for msg in new_msgs:
-                        await redis_bus.publish("crypto", msg)
-                    last_chat_len = len(orchestrator.crypto.chat_messages)
-
-                    logger.info(f"✅ 加密 tick 完成 新訊息={len(new_msgs)} 總聊天={last_chat_len}")
+                    # 順手更新即時 Binance 餘額（有設 key 才會動作）
+                    try:
+                        await orchestrator.crypto.router.fetch_binance_balance()
+                    except Exception:
+                        pass
+                    logger.info(f"✅ 加密 tick 完成 總聊天={len(orchestrator.crypto.chat_messages)}")
                 else:
                     logger.warning("⚠️ 加密本輪沒有可用市場數據，跳過 tick")
             except Exception as e:
@@ -106,15 +99,9 @@ async def fetch_stock_ohlcv(symbol: str, period: str = "3mo", interval: str = "1
         return None
 
 
-async def stock_tick_loop(orchestrator, redis_bus, interval_seconds: int = 300):
-    """
-    每 interval_seconds 秒：
-    1. 用 yfinance 抓美股 OHLCV
-    2. 呼叫 stock pool tick()，讓 18 席美股分析師產生訊號 + 聊天
-    3. 推送新訊息到 Redis → WebSocket
-    """
+async def stock_tick_loop(orchestrator, interval_seconds: int = 300):
+    """每 interval_seconds 秒用 yfinance 抓美股 OHLCV → stock tick()。"""
     logger.info("📡 美股市場數據背景任務啟動")
-    last_chat_len = 0
     while True:
         try:
             market_data: dict[str, pd.DataFrame] = {}
@@ -129,13 +116,7 @@ async def stock_tick_loop(orchestrator, redis_bus, interval_seconds: int = 300):
                     "timeframe": "1H",
                 }
                 await orchestrator.stock.tick(market_data, context)
-
-                new_msgs = orchestrator.stock.chat_messages[last_chat_len:]
-                for msg in new_msgs:
-                    await redis_bus.publish("stock", msg)
-                last_chat_len = len(orchestrator.stock.chat_messages)
-
-                logger.info(f"✅ 美股 tick 完成 新訊息={len(new_msgs)} 總聊天={last_chat_len}")
+                logger.info(f"✅ 美股 tick 完成 總聊天={len(orchestrator.stock.chat_messages)}")
             else:
                 logger.warning("⚠️ 美股本輪沒有可用數據，跳過 tick")
         except Exception as e:

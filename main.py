@@ -185,11 +185,10 @@ class PoolCollective:
         context_extras: dict | None = None,
         cross_pool_warnings: list[dict] | None = None,
     ):
-        """每根 K 棒呼叫一次"""
+        """每根 K 棒呼叫一次。重 CPU 的訊號運算丟到背景執行緒，避免阻塞 event loop。"""
         context_extras = context_extras or {}
         cross_warnings = cross_pool_warnings or []
 
-        # 記錄 tick 時間 + 加一條系統訊息讓聊天室至少有內容
         self._last_tick_at = datetime.now()
         symbols_str = ", ".join(market_data.keys())
         self.chat_messages.append({
@@ -201,15 +200,28 @@ class PoolCollective:
             "content": f"市場數據更新 · {symbols_str} · {len(self.bots)} 席分析師開始評估",
             "confidence": 0.0,
         })
-        logger.info(f"[{self.pool_name}] tick 開始 symbols={list(market_data.keys())} bots={len(self.bots)}")
-        
-        # 跨池警示注入到 context(只讀,不影響共識計算)
         if cross_warnings:
             context_extras["cross_pool_warnings"] = cross_warnings
-        
+
+        # 18 席訊號 + 評論 + 共識聚合（純同步、可能很重）→ 丟到 worker thread
+        approved = await asyncio.to_thread(self._compute, market_data, context_extras)
+
+        # 下單（async I/O，留在主 event loop）
+        for consensus, symbol in approved:
+            order = await self.router.submit(consensus, symbol)
+            if order:
+                logger.info(f"✅ [{self.pool_name}] 下單 {symbol} {consensus.side}")
+
+        # 進化週期檢查
+        if (datetime.now() - self.last_evolution_cycle).days >= self.config.evolution.cycle_days:
+            await self._run_evolution_cycle()
+            self.last_evolution_cycle = datetime.now()
+
+    def _compute(self, market_data: dict, context_extras: dict) -> list:
+        """純同步：產生訊號、市場評論、Meta 投票、共識聚合。回傳待下單的 (consensus, symbol)。"""
         all_signals: list[Signal] = []
 
-        # 第一輪:18 席產生原始信號 + 市場評論
+        # 第一輪：18 席產生原始信號 + 市場評論
         for bot_id, bot in self.bots.items():
             if self.evolution.bot_status.get(bot_id) not in ("active", "breeding"):
                 continue
@@ -225,8 +237,8 @@ class PoolCollective:
                     self._broadcast_to_chat(sig)
                 else:
                     self._broadcast_commentary(bot, symbol, data)
-        
-        # 第二輪:Meta 裁判看 18 席結果
+
+        # 第二輪：Meta 裁判
         if self.meta_bot:
             bot_scores = {bid: bot.compute_metrics().composite_score for bid, bot in self.bots.items()}
             for symbol, data in market_data.items():
@@ -243,24 +255,16 @@ class PoolCollective:
                 if meta_sig:
                     all_signals.append(meta_sig)
                     self._broadcast_to_chat(meta_sig)
-        
-        # 第三輪:共識引擎聚合 → 執行
+
+        # 第三輪：共識聚合
+        approved = []
         bot_winrates = {bid: bot.compute_metrics().win_rate for bid, bot in self.bots.items()}
+        total = self.config.capital.crypto_pool_total if self.pool_name == "crypto" else self.config.capital.stock_pool_total
         for symbol in market_data:
-            consensus = self.consensus.aggregate(
-                all_signals, bot_winrates,
-                self.config.capital.crypto_pool_total if self.pool_name == "crypto" else self.config.capital.stock_pool_total,
-                symbol,
-            )
+            consensus = self.consensus.aggregate(all_signals, bot_winrates, total, symbol)
             if consensus and consensus.approved:
-                order = await self.router.submit(consensus, symbol)
-                if order:
-                    logger.info(f"✅ [{self.pool_name}] 下單 {symbol} {consensus.side}")
-        
-        # 第四輪:進化週期檢查
-        if (datetime.now() - self.last_evolution_cycle).days >= self.config.evolution.cycle_days:
-            await self._run_evolution_cycle()
-            self.last_evolution_cycle = datetime.now()
+                approved.append((consensus, symbol))
+        return approved
     
     def _broadcast_to_chat(self, signal: Signal):
         msg = {

@@ -28,10 +28,8 @@ async def crypto_bots(orchestrator=Depends(get_orchestrator)):
 
 @router.get("/portfolio")
 async def crypto_portfolio(orchestrator=Depends(get_orchestrator)):
-    router_ = orchestrator.crypto.router
-    # 拉即時 Binance 餘額
-    await router_.fetch_binance_balance()
-    return router_.get_portfolio_snapshot()["crypto_pool"]
+    # 餘額由背景 tick loop 即時更新，這裡直接讀快取
+    return orchestrator.crypto.router.get_portfolio_snapshot()["crypto_pool"]
 
 
 @router.get("/positions")
