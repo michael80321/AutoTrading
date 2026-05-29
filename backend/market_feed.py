@@ -1,6 +1,6 @@
 """
 市場數據背景餵送
-- 加密池：每 60 秒從 Bybit 公開 API 抓 OHLCV（Binance 在 Railway US 被封鎖）
+- 加密池：每 60 秒從 Binance 公開 API 抓 OHLCV（新加坡節點可連）
 - 美股池：每 300 秒用 yfinance 抓 OHLCV
 """
 import asyncio
@@ -14,35 +14,27 @@ logger = logging.getLogger(__name__)
 
 CRYPTO_SYMBOLS = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT"]
 OHLCV_LIMIT = 300
-TIMEFRAME = "60"  # Bybit interval 用分鐘數，60 = 1H
+TIMEFRAME = "1h"
 
-# Bybit 公開 K 線 API（不需授權，不封鎖美國 IP）
-BYBIT_KLINE_URL = "https://api.bybit.com/v5/market/kline"
+BINANCE_KLINE_URL = "https://api.binance.com/api/v3/klines"
 
 
-async def fetch_ohlcv(client: httpx.AsyncClient, symbol: str, interval: str = "60", limit: int = 300) -> pd.DataFrame | None:
-    """從 Bybit 抓 OHLCV。interval 單位為分鐘（60=1H）。"""
+async def fetch_ohlcv(client: httpx.AsyncClient, symbol: str, interval: str = "1h", limit: int = 300) -> pd.DataFrame | None:
     try:
-        params = {
-            "category": "linear",
-            "symbol": symbol,
-            "interval": interval,
-            "limit": limit,
-        }
-        resp = await client.get(BYBIT_KLINE_URL, params=params, timeout=10.0)
+        params = {"symbol": symbol, "interval": interval, "limit": limit}
+        resp = await client.get(BINANCE_KLINE_URL, params=params, timeout=10.0)
         if resp.status_code != 200:
-            logger.warning(f"Bybit kline {symbol} HTTP {resp.status_code}")
+            logger.warning(f"Binance kline {symbol} HTTP {resp.status_code}: {resp.text[:200]}")
             return None
-        body = resp.json()
-        if body.get("retCode") != 0:
-            logger.warning(f"Bybit kline {symbol} error: {body.get('retMsg')}")
-            return None
-        # Bybit 回傳最新在前，需反轉；欄位: [startTime, open, high, low, close, volume, turnover]
-        rows = body["result"]["list"][::-1]
-        df = pd.DataFrame(rows, columns=["open_time", "open", "high", "low", "close", "volume", "turnover"])
+        raw = resp.json()
+        df = pd.DataFrame(raw, columns=[
+            "open_time", "open", "high", "low", "close", "volume",
+            "close_time", "quote_volume", "trades", "taker_buy_base",
+            "taker_buy_quote", "ignore",
+        ])
         for col in ["open", "high", "low", "close", "volume"]:
             df[col] = df[col].astype(float)
-        df["open_time"] = pd.to_datetime(df["open_time"].astype(float), unit="ms", utc=True)
+        df["open_time"] = pd.to_datetime(df["open_time"], unit="ms", utc=True)
         df.set_index("open_time", inplace=True)
         return df
     except Exception as e:
@@ -53,11 +45,11 @@ async def fetch_ohlcv(client: httpx.AsyncClient, symbol: str, interval: str = "6
 async def market_tick_loop(orchestrator, redis_bus, interval_seconds: int = 60):
     """
     每 interval_seconds 秒：
-    1. 從 Binance 公開 API 抓最新 OHLCV（不需要 API Key）
+    1. 從 Binance 公開 API 抓最新 OHLCV
     2. 呼叫 crypto pool tick()，讓 18 席分析師產生訊號 + 聊天
     3. 將新產生的聊天訊息推送到 Redis → WebSocket
     """
-    logger.info("📡 市場數據背景任務啟動")
+    logger.info("📡 加密市場數據背景任務啟動")
     last_chat_len = 0
     async with httpx.AsyncClient() as client:
         while True:
@@ -75,17 +67,16 @@ async def market_tick_loop(orchestrator, redis_bus, interval_seconds: int = 60):
                     }
                     await orchestrator.crypto.tick(market_data, context)
 
-                    # 推送新訊息到 Redis → WebSocket
                     new_msgs = orchestrator.crypto.chat_messages[last_chat_len:]
                     for msg in new_msgs:
                         await redis_bus.publish("crypto", msg)
                     last_chat_len = len(orchestrator.crypto.chat_messages)
 
-                    logger.info(f"✅ tick 完成 新訊息={len(new_msgs)} 總聊天={last_chat_len}")
+                    logger.info(f"✅ 加密 tick 完成 新訊息={len(new_msgs)} 總聊天={last_chat_len}")
                 else:
-                    logger.warning("⚠️ 本輪沒有可用市場數據，跳過 tick")
+                    logger.warning("⚠️ 加密本輪沒有可用市場數據，跳過 tick")
             except Exception as e:
-                logger.error(f"market_tick_loop 錯誤: {e}")
+                logger.error(f"market_tick_loop 錯誤: {e}", exc_info=True)
 
             await asyncio.sleep(interval_seconds)
 
@@ -148,6 +139,6 @@ async def stock_tick_loop(orchestrator, redis_bus, interval_seconds: int = 300):
             else:
                 logger.warning("⚠️ 美股本輪沒有可用數據，跳過 tick")
         except Exception as e:
-            logger.error(f"stock_tick_loop 錯誤: {e}")
+            logger.error(f"stock_tick_loop 錯誤: {e}", exc_info=True)
 
         await asyncio.sleep(interval_seconds)

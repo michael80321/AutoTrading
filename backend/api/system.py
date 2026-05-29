@@ -58,10 +58,10 @@ async def emergency_halt(orchestrator=Depends(get_orchestrator)):
 
 @router.get("/test-feed")
 async def test_feed():
-    """直接測試 Bybit OHLCV 抓取，回傳原始結果用於診斷"""
+    """直接測試 Binance OHLCV 抓取，回傳原始結果用於診斷"""
     import httpx
-    url = "https://api.bybit.com/v5/market/kline"
-    params = {"category": "linear", "symbol": "BTCUSDT", "interval": "60", "limit": "5"}
+    url = "https://api.binance.com/api/v3/klines"
+    params = {"symbol": "BTCUSDT", "interval": "1h", "limit": "5"}
     try:
         async with httpx.AsyncClient() as c:
             resp = await c.get(url, params=params, timeout=10.0)
@@ -78,7 +78,7 @@ async def debug_status(orchestrator=Depends(get_orchestrator)):
     binance_ok = False
     try:
         async with httpx.AsyncClient() as c:
-            r = await c.get("https://api.bybit.com/v5/market/time", timeout=5.0)
+            r = await c.get("https://api.binance.com/api/v3/ping", timeout=5.0)
             binance_ok = r.status_code == 200
     except Exception:
         pass
