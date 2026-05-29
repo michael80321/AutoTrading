@@ -88,7 +88,10 @@ async def websocket_endpoint(websocket: WebSocket, pool: Literal["crypto", "stoc
 
 @app.get("/health")
 async def health():
-    redis_ok = await redis_bus.ping()
+    try:
+        redis_ok = await asyncio.wait_for(redis_bus.ping(), timeout=2.0)
+    except (asyncio.TimeoutError, Exception):
+        redis_ok = False
     return {
         "status": "ok",
         "redis": "ok" if redis_ok else "unavailable",
