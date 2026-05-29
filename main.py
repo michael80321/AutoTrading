@@ -188,6 +188,20 @@ class PoolCollective:
         """每根 K 棒呼叫一次"""
         context_extras = context_extras or {}
         cross_warnings = cross_pool_warnings or []
+
+        # 記錄 tick 時間 + 加一條系統訊息讓聊天室至少有內容
+        self._last_tick_at = datetime.now()
+        symbols_str = ", ".join(market_data.keys())
+        self.chat_messages.append({
+            "channel": self.chat_channel,
+            "timestamp": self._last_tick_at.isoformat(),
+            "from": "🖥 系統",
+            "school": "系統",
+            "symbol": symbols_str,
+            "content": f"市場數據更新 · {symbols_str} · {len(self.bots)} 席分析師開始評估",
+            "confidence": 0.0,
+        })
+        logger.info(f"[{self.pool_name}] tick 開始 symbols={list(market_data.keys())} bots={len(self.bots)}")
         
         # 跨池警示注入到 context(只讀,不影響共識計算)
         if cross_warnings:

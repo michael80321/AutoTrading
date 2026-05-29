@@ -70,11 +70,13 @@ async def debug_status(orchestrator=Depends(get_orchestrator)):
 
     exchange = orchestrator.crypto.router.binance
     exchange_name = type(exchange).__name__ if exchange else "none"
+    last_tick = getattr(orchestrator.crypto, "_last_tick_at", None)
     return {
         "crypto_bots": len(orchestrator.crypto.bots),
         "stock_bots": len(orchestrator.stock.bots),
         "crypto_chat_messages": len(orchestrator.crypto.chat_messages),
         "stock_chat_messages": len(orchestrator.stock.chat_messages),
+        "crypto_last_tick_at": last_tick.isoformat() if last_tick else None,
         "crypto_open_positions": len(orchestrator.crypto.router.open_orders),
         "crypto_pool_usdt": orchestrator.crypto.router.crypto_pool,
         "exchange_client": exchange_name,
