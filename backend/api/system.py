@@ -54,3 +54,28 @@ async def emergency_halt(orchestrator=Depends(get_orchestrator)):
     orchestrator.crypto.router.open_orders.clear()
     orchestrator.stock.router.open_orders.clear()
     return {"halted": True, "message": "所有新部位已暫停"}
+
+
+@router.get("/debug")
+async def debug_status(orchestrator=Depends(get_orchestrator)):
+    """診斷端點 — 顯示 tick loop 狀態"""
+    import httpx
+    binance_ok = False
+    try:
+        async with httpx.AsyncClient() as c:
+            r = await c.get("https://api.binance.com/api/v3/ping", timeout=5.0)
+            binance_ok = r.status_code == 200
+    except Exception:
+        pass
+
+    return {
+        "crypto_bots": len(orchestrator.crypto.bots),
+        "stock_bots": len(orchestrator.stock.bots),
+        "crypto_chat_messages": len(orchestrator.crypto.chat_messages),
+        "stock_chat_messages": len(orchestrator.stock.chat_messages),
+        "crypto_open_positions": len(orchestrator.crypto.router.open_orders),
+        "crypto_pool_usdt": orchestrator.crypto.router.crypto_pool,
+        "binance_client_connected": orchestrator.crypto.router.binance is not None,
+        "binance_api_reachable": binance_ok,
+        "ibkr_client_connected": orchestrator.stock.router.ibkr is not None,
+    }

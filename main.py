@@ -187,12 +187,15 @@ class PoolCollective:
                 continue
             for symbol, data in market_data.items():
                 ctx = {**context_extras, "symbol": symbol}
-                sig = bot.signal(data, ctx)
+                try:
+                    sig = bot.signal(data, ctx)
+                except Exception as e:
+                    logger.warning(f"[{self.pool_name}] {bot.name} signal() 錯誤: {e}")
+                    sig = None
                 if sig:
                     all_signals.append(sig)
                     self._broadcast_to_chat(sig)
                 else:
-                    # 沒有交易信號時仍發佈市場觀察評論
                     self._broadcast_commentary(bot, symbol, data)
         
         # 第二輪:Meta 裁判看 18 席結果
@@ -204,7 +207,11 @@ class PoolCollective:
                     "sub_signals": [s for s in all_signals if s.symbol == symbol],
                     "bot_composite_scores": bot_scores,
                 }
-                meta_sig = self.meta_bot.signal(data, ctx)
+                try:
+                    meta_sig = self.meta_bot.signal(data, ctx)
+                except Exception as e:
+                    logger.warning(f"[{self.pool_name}] Meta signal() 錯誤: {e}")
+                    meta_sig = None
                 if meta_sig:
                     all_signals.append(meta_sig)
                     self._broadcast_to_chat(meta_sig)
