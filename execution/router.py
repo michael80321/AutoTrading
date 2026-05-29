@@ -240,7 +240,7 @@ class ExecutionRouter:
             "stop_loss": o.stop_loss,
             "tp1": tp1,
             "tp2": tp2,
-            "tp1_filled": o.status == OrderStatus.PARTIALLY_FILLED,
+            "tp1_filled": False,  # TP1 現在是全數平倉，倉位會直接消失
             "status": o.status.value,
             "entry_time": o.submitted_at.isoformat() if o.submitted_at else None,
             "filled_time": o.filled_at.isoformat() if o.filled_at else None,
@@ -265,34 +265,34 @@ class ExecutionRouter:
             return None
 
     async def check_tp1_and_close(self):
-        """檢查開放倉位，TP1 達到時強制平倉 50%"""
+        """檢查開放倉位，TP1 達到時全部平倉"""
         if self.binance is None:
             return
         for order_id, order in list(self.open_orders.items()):
             if order.pool != "crypto" or not order.take_profit:
                 continue
-            if order.status == OrderStatus.PARTIALLY_FILLED:
-                continue  # 已經觸發過 TP1
+            if order.status in (OrderStatus.FILLED, OrderStatus.CANCELLED):
+                continue  # 已平倉
             try:
                 ticker = await self.binance.fetch_ticker(order.symbol)
                 current_price = ticker["last"]
                 tp1 = order.take_profit[0]
                 if order.side == "LONG" and current_price >= tp1:
-                    await self._execute_tp1(order, current_price)
+                    await self._execute_full_close(order, current_price, "TP1")
                 elif order.side == "SHORT" and current_price <= tp1:
-                    await self._execute_tp1(order, current_price)
+                    await self._execute_full_close(order, current_price, "TP1")
             except Exception as e:
                 logger.error(f"TP1 檢查失敗 {order.symbol}: {e}")
 
-    async def _execute_tp1(self, order: "ExecutionOrder", price: float):
-        """執行 TP1 — 平倉 50% 並標記"""
-        tp1_qty = round(order.qty * order.tp_split[0], 6)
+    async def _execute_full_close(self, order: "ExecutionOrder", price: float, reason: str = "TP1"):
+        """全數平倉並移入 closed_orders"""
         try:
             side = "sell" if order.side == "LONG" else "buy"
-            await self.binance.create_market_order(order.symbol, side, tp1_qty)
-            order.status = OrderStatus.PARTIALLY_FILLED
-            pnl = (price - order.entry_price) * tp1_qty * (1 if order.side == "LONG" else -1)
-            order.realized_pnl += pnl - tp1_qty * price * self.fee_rate_crypto
-            logger.info(f"✅ TP1 止盈 {order.symbol} qty={tp1_qty} price={price} PnL={pnl:.2f}")
+            await self.binance.create_market_order(order.symbol, side, order.qty)
+            pnl = (price - order.entry_price) * order.qty * (1 if order.side == "LONG" else -1)
+            order.realized_pnl += pnl - order.qty * price * self.fee_rate_crypto
+            order.status = OrderStatus.FILLED
+            self.on_close(order.order_id, price, reason)
+            logger.info(f"✅ {reason} 全數平倉 {order.symbol} qty={order.qty} price={price} PnL={pnl:.2f}")
         except Exception as e:
-            logger.error(f"TP1 執行失敗 {order.symbol}: {e}")
+            logger.error(f"{reason} 平倉失敗 {order.symbol}: {e}")
