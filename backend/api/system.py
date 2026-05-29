@@ -72,6 +72,9 @@ async def test_feed():
             }
     except Exception as e:
         return {"status_code": None, "body": None, "error": str(e)}
+
+
+@router.get("/debug")
 async def debug_status(orchestrator=Depends(get_orchestrator)):
     """診斷端點 — 顯示 tick loop 狀態"""
     import httpx

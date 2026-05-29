@@ -28,29 +28,55 @@ ws_manager = ConnectionManager()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    await redis_bus.connect()
-    asyncio.create_task(redis_bus.subscribe_and_forward(ws_manager))
-    logger.info("✅ Redis bus 已連線")
-    # 初始化協調器並連接 brokers
-    from .api.deps import get_orchestrator
-    orch = get_orchestrator()
-    await orch.connect_brokers()
-    # 保留強引用，防止 asyncio GC 在任務執行前回收
-    _bg_tasks = set()
-    for coro in [
-        orch._tp1_polling_loop(),
-        market_tick_loop(orch, redis_bus, interval_seconds=60),
-        stock_tick_loop(orch, redis_bus, interval_seconds=300),
-    ]:
-        t = asyncio.create_task(coro)
-        _bg_tasks.add(t)
-        t.add_done_callback(_bg_tasks.discard)
-    app.state.bg_tasks = _bg_tasks  # 掛到 app.state 確保生命週期夠長
-    logger.info(f"✅ 已啟動 {len(_bg_tasks)} 個背景任務")
+    # 關鍵：lifespan 必須立刻 yield，讓 /health 馬上可用，避免 Railway healthcheck 逾時回滾。
+    # 所有耗時的初始化（Redis、broker、36 席 bot、tick loop）都丟到背景任務，不阻塞啟動。
+    app.state.bg_tasks = set()
+    app.state.init_done = False
+    boot = asyncio.create_task(_background_boot(app))
+    app.state.bg_tasks.add(boot)
     yield
-    for t in _bg_tasks:
+    for t in app.state.bg_tasks:
         t.cancel()
-    await redis_bus.disconnect()
+    try:
+        await redis_bus.disconnect()
+    except Exception:
+        pass
+
+
+async def _background_boot(app: FastAPI):
+    """在 app 已健康後才執行的初始化流程，任何步驟失敗都不影響服務存活。"""
+    # 1. Redis（連不上也沒關係，降級為記憶體模式）
+    try:
+        await asyncio.wait_for(redis_bus.connect(), timeout=10.0)
+        t = asyncio.create_task(redis_bus.subscribe_and_forward(ws_manager))
+        app.state.bg_tasks.add(t)
+        t.add_done_callback(app.state.bg_tasks.discard)
+        logger.info("✅ Redis bus 已連線")
+    except Exception as e:
+        logger.warning(f"Redis 初始化失敗（降級運行）: {e}")
+
+    # 2. 協調器 + broker
+    try:
+        from .api.deps import get_orchestrator
+        orch = get_orchestrator()
+        try:
+            await asyncio.wait_for(orch.connect_brokers(), timeout=20.0)
+        except Exception as e:
+            logger.warning(f"broker 連線略過: {e}")
+
+        # 3. 背景任務：TP1 輪詢 + 加密/美股 tick loop
+        for coro in [
+            orch._tp1_polling_loop(),
+            market_tick_loop(orch, redis_bus, interval_seconds=60),
+            stock_tick_loop(orch, redis_bus, interval_seconds=300),
+        ]:
+            t = asyncio.create_task(coro)
+            app.state.bg_tasks.add(t)
+            t.add_done_callback(app.state.bg_tasks.discard)
+        app.state.init_done = True
+        logger.info(f"✅ 背景初始化完成，{len(app.state.bg_tasks)} 個任務運行中")
+    except Exception as e:
+        logger.error(f"背景初始化失敗: {e}", exc_info=True)
 
 
 app = FastAPI(
@@ -88,12 +114,9 @@ async def websocket_endpoint(websocket: WebSocket, pool: Literal["crypto", "stoc
 
 @app.get("/health")
 async def health():
-    try:
-        redis_ok = await asyncio.wait_for(redis_bus.ping(), timeout=2.0)
-    except (asyncio.TimeoutError, Exception):
-        redis_ok = False
+    # 只確認 HTTP server 存活，絕不依賴 Redis/broker，確保 Railway healthcheck 永遠通過
     return {
         "status": "ok",
-        "redis": "ok" if redis_ok else "unavailable",
+        "init_done": getattr(app.state, "init_done", False),
         "timestamp": datetime.utcnow().isoformat(),
     }
