@@ -56,7 +56,22 @@ async def emergency_halt(orchestrator=Depends(get_orchestrator)):
     return {"halted": True, "message": "所有新部位已暫停"}
 
 
-@router.get("/debug")
+@router.get("/test-feed")
+async def test_feed():
+    """直接測試 Bybit OHLCV 抓取，回傳原始結果用於診斷"""
+    import httpx
+    url = "https://api.bybit.com/v5/market/kline"
+    params = {"category": "linear", "symbol": "BTCUSDT", "interval": "60", "limit": "5"}
+    try:
+        async with httpx.AsyncClient() as c:
+            resp = await c.get(url, params=params, timeout=10.0)
+            return {
+                "status_code": resp.status_code,
+                "body": resp.json(),
+                "error": None,
+            }
+    except Exception as e:
+        return {"status_code": None, "body": None, "error": str(e)}
 async def debug_status(orchestrator=Depends(get_orchestrator)):
     """診斷端點 — 顯示 tick loop 狀態"""
     import httpx
