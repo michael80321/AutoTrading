@@ -164,8 +164,8 @@ class PoolCollective:
             context_extras["cross_pool_warnings"] = cross_warnings
         
         all_signals: list[Signal] = []
-        
-        # 第一輪:18 席產生原始信號
+
+        # 第一輪:18 席產生原始信號 + 市場評論
         for bot_id, bot in self.bots.items():
             if self.evolution.bot_status.get(bot_id) not in ("active", "breeding"):
                 continue
@@ -175,6 +175,9 @@ class PoolCollective:
                 if sig:
                     all_signals.append(sig)
                     self._broadcast_to_chat(sig)
+                else:
+                    # 沒有交易信號時仍發佈市場觀察評論
+                    self._broadcast_commentary(bot, symbol, data)
         
         # 第二輪:Meta 裁判看 18 席結果
         if self.meta_bot:
@@ -215,12 +218,60 @@ class PoolCollective:
             "from": signal.bot_name,
             "school": signal.school,
             "symbol": signal.symbol,
-            "content": f"{signal.side} @ {signal.entry_price:.4f} | SL {signal.stop_loss:.4f} | {signal.rationale}",
+            "content": f"🚨 {signal.side} @ {signal.entry_price:.4f} | SL {signal.stop_loss:.4f} | TP {signal.take_profit[0]:.4f} | {signal.rationale}",
             "confidence": signal.confidence,
         }
         self.chat_messages.append(msg)
         if len(self.chat_messages) > 1000:
             self.chat_messages = self.chat_messages[-500:]
+
+    def _broadcast_commentary(self, bot, symbol: str, data: "pd.DataFrame"):
+        """無交易信號時，分析師發佈市場觀察（每輪每個 symbol 只發一次）"""
+        import random
+        try:
+            latest = data.iloc[-1]
+            prev = data.iloc[-2]
+            close = float(latest["close"])
+            change_pct = (close - float(prev["close"])) / float(prev["close"]) * 100
+            vol_ratio = float(latest["volume"]) / (float(data["volume"].rolling(20).mean().iloc[-1]) + 1e-9)
+
+            if change_pct > 0.5:
+                trend = f"↑ 上漲 {change_pct:.2f}%"
+                view_pool = [
+                    f"突破短期阻力，量能比 {vol_ratio:.2f}x，觀察延續性",
+                    f"動能偏多，等待回測確認進場機會",
+                    f"多方主導，關注 {close * 1.005:.2f} 壓力位",
+                ]
+            elif change_pct < -0.5:
+                trend = f"↓ 下跌 {change_pct:.2f}%"
+                view_pool = [
+                    f"空方壓力浮現，量能比 {vol_ratio:.2f}x，留意支撐",
+                    f"動能偏空，等待止跌訊號再評估",
+                    f"熊方施壓，關注 {close * 0.995:.2f} 支撐位",
+                ]
+            else:
+                trend = f"→ 橫盤 {change_pct:+.2f}%"
+                view_pool = [
+                    f"盤整區間，{symbol} 等待方向選擇",
+                    f"量能萎縮，暫無明確方向",
+                    f"觀望為主，突破方向確立後再行動",
+                ]
+
+            content = f"[{symbol}] {trend} · {random.choice(view_pool)}"
+            msg = {
+                "channel": self.chat_channel,
+                "timestamp": datetime.now().isoformat(),
+                "from": bot.name,
+                "school": getattr(bot, "SCHOOL", ""),
+                "symbol": symbol,
+                "content": content,
+                "confidence": 0.0,
+            }
+            self.chat_messages.append(msg)
+            if len(self.chat_messages) > 1000:
+                self.chat_messages = self.chat_messages[-500:]
+        except Exception:
+            pass
     
     async def _run_evolution_cycle(self):
         """30 天結算,池內獨立排名"""

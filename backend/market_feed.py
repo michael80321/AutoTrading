@@ -42,13 +42,15 @@ async def fetch_ohlcv(client: httpx.AsyncClient, symbol: str, interval: str = "1
         return None
 
 
-async def market_tick_loop(orchestrator, interval_seconds: int = 60):
+async def market_tick_loop(orchestrator, redis_bus, interval_seconds: int = 60):
     """
     每 interval_seconds 秒：
     1. 從 Binance 公開 API 抓最新 OHLCV（不需要 API Key）
     2. 呼叫 crypto pool tick()，讓 18 席分析師產生訊號 + 聊天
+    3. 將新產生的聊天訊息推送到 Redis → WebSocket
     """
     logger.info("📡 市場數據背景任務啟動")
+    last_chat_len = 0
     async with httpx.AsyncClient() as client:
         while True:
             try:
@@ -64,7 +66,14 @@ async def market_tick_loop(orchestrator, interval_seconds: int = 60):
                         "timeframe": TIMEFRAME,
                     }
                     await orchestrator.crypto.tick(market_data, context)
-                    logger.info(f"✅ tick 完成 symbols={list(market_data.keys())} chat_len={len(orchestrator.crypto.chat_messages)}")
+
+                    # 推送新訊息到 Redis → WebSocket
+                    new_msgs = orchestrator.crypto.chat_messages[last_chat_len:]
+                    for msg in new_msgs:
+                        await redis_bus.publish("crypto", msg)
+                    last_chat_len = len(orchestrator.crypto.chat_messages)
+
+                    logger.info(f"✅ tick 完成 新訊息={len(new_msgs)} 總聊天={last_chat_len}")
                 else:
                     logger.warning("⚠️ 本輪沒有可用市場數據，跳過 tick")
             except Exception as e:

@@ -15,6 +15,8 @@ router = APIRouter()
 
 @router.get("/snapshot")
 async def crypto_snapshot(orchestrator=Depends(get_orchestrator)):
+    # 同時拉即時 Binance 餘額更新 crypto_pool
+    await orchestrator.crypto.router.fetch_binance_balance()
     return orchestrator.crypto.get_pool_snapshot()
 
 

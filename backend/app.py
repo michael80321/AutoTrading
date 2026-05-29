@@ -35,7 +35,7 @@ async def lifespan(app: FastAPI):
     from .api.deps import get_orchestrator
     orch = get_orchestrator()
     asyncio.create_task(orch._tp1_polling_loop())
-    asyncio.create_task(market_tick_loop(orch, interval_seconds=60))
+    asyncio.create_task(market_tick_loop(orch, redis_bus, interval_seconds=60))
     yield
     await redis_bus.disconnect()
 
