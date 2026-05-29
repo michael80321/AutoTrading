@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 
 CRYPTO_SYMBOLS = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT"]
 OHLCV_LIMIT = 300
-TIMEFRAME = "1h"
+TIMEFRAME = "60"  # Bybit interval 用分鐘數，60 = 1H
 
 # Bybit 公開 K 線 API（不需授權，不封鎖美國 IP）
 BYBIT_KLINE_URL = "https://api.bybit.com/v5/market/kline"
