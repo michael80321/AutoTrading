@@ -129,28 +129,42 @@ class ExecutionRouter:
         return None
     
     async def _submit_binance(self, order: ExecutionOrder) -> bool:
-        """提交至 Binance — 市價進場 + OCO (止損+止盈)"""
+        """提交至 Binance 合約 — 市價進場 + STOP_MARKET 止損 + TAKE_PROFIT_MARKET 止盈"""
         if self.binance is None:
-            logger.info(f"[DRY-RUN] Binance {order.symbol} {order.side} qty={order.qty}")
+            logger.info(f"[DRY-RUN] 合約 {order.symbol} {order.side} qty={order.qty:.4f}")
             return True
         try:
             side = "buy" if order.side == "LONG" else "sell"
-            # 1. 市價進場
-            entry_resp = await self.binance.create_market_order(order.symbol, side, order.qty)
-            # 2. 對每個 TP 掛一個 OCO 訂單
-            for i, tp in enumerate(order.take_profit):
-                split_qty = order.qty * order.tp_split[i] if i < len(order.tp_split) else order.qty / len(order.take_profit)
-                opp_side = "sell" if side == "buy" else "buy"
+            opp_side = "sell" if side == "buy" else "buy"
+            # 精度處理：合約數量需符合 lot size
+            markets = await self.binance.load_markets()
+            market = markets.get(order.symbol) or markets.get(order.symbol.replace("USDT", "/USDT"))
+            qty = order.qty
+            if market:
+                precision = market.get("precision", {}).get("amount", 3)
+                qty = round(order.qty, precision)
+
+            # 1. 市價開倉
+            await self.binance.create_market_order(order.symbol, side, qty)
+
+            # 2. 止損單 STOP_MARKET（全倉 reduceOnly）
+            await self.binance.create_order(
+                order.symbol, "STOP_MARKET", opp_side, qty, None,
+                {"stopPrice": order.stop_loss, "reduceOnly": True},
+            )
+
+            # 3. 止盈單 TAKE_PROFIT_MARKET（TP1 = 全數平倉）
+            if order.take_profit:
                 await self.binance.create_order(
-                    order.symbol, "OCO", opp_side, split_qty,
-                    price=tp,
-                    stopPrice=order.stop_loss,
-                    stopLimitPrice=order.stop_loss * (0.998 if side == "buy" else 1.002),
+                    order.symbol, "TAKE_PROFIT_MARKET", opp_side, qty, None,
+                    {"stopPrice": order.take_profit[0], "reduceOnly": True},
                 )
-            order.fees_paid = order.qty * order.entry_price * self.fee_rate_crypto
+
+            order.fees_paid = qty * order.entry_price * self.fee_rate_crypto
+            logger.info(f"✅ 合約下單 {order.symbol} {order.side} qty={qty} SL={order.stop_loss} TP={order.take_profit[0] if order.take_profit else 'N/A'}")
             return True
         except Exception as e:
-            logger.error(f"Binance 下單失敗:{e}")
+            logger.error(f"Binance 合約下單失敗: {e}")
             order.status = OrderStatus.REJECTED
             return False
     
@@ -250,18 +264,19 @@ class ExecutionRouter:
         }
 
     async def fetch_binance_balance(self) -> Optional[float]:
-        """從 Binance 拉即時 USDT 餘額，更新 crypto_pool"""
+        """從 Binance 合約帳戶拉即時 USDT 餘額，更新 crypto_pool"""
         if self.binance is None:
             return None
         try:
-            balance = await self.binance.fetch_balance()
+            # defaultType=future 時 fetch_balance 直接讀合約錢包
+            balance = await self.binance.fetch_balance({"type": "future"})
             usdt = balance.get("USDT", {}).get("free", None)
             if usdt is not None:
                 self.crypto_pool = float(usdt)
-                logger.info(f"✅ Binance 餘額更新: {usdt:.2f} USDT")
+                logger.info(f"✅ Binance 合約餘額: {usdt:.2f} USDT")
             return usdt
         except Exception as e:
-            logger.error(f"Binance 餘額拉取失敗: {e}")
+            logger.error(f"Binance 合約餘額拉取失敗: {e}")
             return None
 
     async def check_tp1_and_close(self):
@@ -288,7 +303,9 @@ class ExecutionRouter:
         """全數平倉並移入 closed_orders"""
         try:
             side = "sell" if order.side == "LONG" else "buy"
-            await self.binance.create_market_order(order.symbol, side, order.qty)
+            await self.binance.create_market_order(
+                order.symbol, side, order.qty, None, {"reduceOnly": True}
+            )
             pnl = (price - order.entry_price) * order.qty * (1 if order.side == "LONG" else -1)
             order.realized_pnl += pnl - order.qty * price * self.fee_rate_crypto
             order.status = OrderStatus.FILLED

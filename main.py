@@ -95,8 +95,11 @@ class PoolCollective:
                         "apiKey": binance_key,
                         "secret": binance_secret,
                         "enableRateLimit": True,
+                        "options": {
+                            "defaultType": "future",  # USDM 永續合約
+                        },
                     })
-                    logger.info("✅ Binance client 初始化成功（注意：Railway US 可能無法連線）")
+                    logger.info("✅ Binance 合約 client 初始化成功")
                 except Exception as e:
                     logger.warning(f"Binance client 初始化失敗: {e}")
             else:
