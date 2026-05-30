@@ -74,7 +74,22 @@ async def test_feed():
         return {"status_code": None, "body": None, "error": str(e)}
 
 
-@router.get("/debug")
+@router.get("/ip")
+async def server_ip():
+    """查詢 Railway 伺服器目前的對外 IP"""
+    import httpx
+    try:
+        async with httpx.AsyncClient() as c:
+            r = await c.get("https://api.ipify.org?format=json", timeout=8.0)
+            ip = r.json().get("ip", "unknown")
+        return {
+            "outbound_ip": ip,
+            "note": "此 IP 為 Railway 容器目前對外 IP，重新部署後可能更換。建議 Binance API 改為不設 IP 限制，或改用 Bybit。",
+        }
+    except Exception as e:
+        return {"outbound_ip": None, "error": str(e)}
+
+
 async def debug_status(orchestrator=Depends(get_orchestrator)):
     """診斷端點 — 顯示 tick loop 狀態"""
     import httpx
