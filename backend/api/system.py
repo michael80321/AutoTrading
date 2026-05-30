@@ -136,3 +136,90 @@ async def debug_status(orchestrator=Depends(get_orchestrator)):
         "futures_balance_error": balance_error,
         "ibkr_client_connected": orchestrator.stock.router.ibkr is not None,
     }
+
+
+@router.get("/test-order")
+async def test_order(
+    symbol: str = "TRXUSDT",
+    confirm: bool = False,
+    orchestrator=Depends(get_orchestrator),
+):
+    """
+    驗證合約下單路徑。
+    confirm=false（預設）：只模擬，不下真實訂單。
+    confirm=true：下一張最小金額合約單後立刻平倉，驗證完整路徑。
+    建議先用 confirm=false 確認參數無誤，再用 confirm=true。
+    """
+    exchange = orchestrator.crypto.router.binance
+    if exchange is None:
+        return {"ok": False, "error": "exchange client 未初始化，請確認 BINANCE_API_KEY 已設定"}
+
+    try:
+        # 1. 抓目前價格與精度
+        await exchange.load_markets()
+        ticker = await exchange.fetch_ticker(symbol)
+        price = float(ticker["last"])
+        market = exchange.markets.get(symbol, {})
+        amount_precision = market.get("precision", {}).get("amount", 1)
+
+        # 計算最小下單量（目標名目 ~10 USDT）
+        target_notional = 10.0
+        raw_qty = target_notional / price
+        # 無條件進位到精度
+        import math
+        step = 10 ** (-amount_precision)
+        qty = math.ceil(raw_qty / step) * step
+        qty = round(qty, amount_precision)
+        notional = round(qty * price, 2)
+
+        plan = {
+            "symbol": symbol,
+            "price": price,
+            "qty": qty,
+            "notional_usdt": notional,
+            "amount_precision": amount_precision,
+            "steps": [
+                f"BUY MARKET {qty} {symbol} (進場，名目 ~${notional} USDT)",
+                f"SELL MARKET {qty} {symbol} reduceOnly=True (立刻平倉)",
+            ],
+        }
+
+        if not confirm:
+            return {
+                "ok": True,
+                "dry_run": True,
+                "message": "模擬模式，未下單。加上 ?confirm=true 執行真實測試。",
+                **plan,
+            }
+
+        # 2. 真實下單：開倉
+        entry = await exchange.create_market_order(symbol, "buy", qty)
+        entry_price = float(entry.get("average") or entry.get("price") or price)
+
+        # 3. 立刻平倉
+        close = await exchange.create_market_order(
+            symbol, "sell", qty, None, {"reduceOnly": True}
+        )
+        close_price = float(close.get("average") or close.get("price") or price)
+
+        pnl = (close_price - entry_price) * qty
+        fee = notional * 0.0004 * 2  # taker * 來回
+
+        return {
+            "ok": True,
+            "dry_run": False,
+            "symbol": symbol,
+            "qty": qty,
+            "entry_price": entry_price,
+            "close_price": close_price,
+            "gross_pnl": round(pnl, 4),
+            "estimated_fee": round(fee, 4),
+            "net_pnl": round(pnl - fee, 4),
+            "entry_order_id": entry.get("id"),
+            "close_order_id": close.get("id"),
+            "message": "✅ 下單與平倉成功，合約路徑驗證通過",
+        }
+
+    except Exception as e:
+        return {"ok": False, "error": str(e), "symbol": symbol}
+
