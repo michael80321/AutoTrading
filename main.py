@@ -459,17 +459,35 @@ class DualPoolOrchestrator:
         # 啟動 TP1 背景輪詢（需要在事件循環中呼叫）
         try:
             asyncio.get_running_loop()
+            asyncio.create_task(self._startup_balance_fetch())
             asyncio.create_task(self._tp1_polling_loop())
         except RuntimeError:
             pass  # 若在同步環境呼叫，跳過（lifespan 會處理）
 
+    async def _startup_balance_fetch(self):
+        """啟動後 3 秒拉一次真實餘額，確保 UI 不顯示 config 預設值"""
+        await asyncio.sleep(3)
+        try:
+            await self.crypto.router.fetch_binance_balance()
+        except Exception as e:
+            logger.error(f"啟動餘額同步失敗: {e}")
+
     async def _tp1_polling_loop(self):
-        """每 30 秒自動檢查並執行 TP1 止盈"""
+        """每 30 秒自動檢查並執行 TP1 止盈；每 10 分鐘同步一次 Binance 真實餘額"""
+        _balance_tick = 0
         while True:
             try:
                 await self.crypto.router.check_tp1_and_close()
             except Exception as e:
                 logger.error(f"TP1 輪詢失敗: {e}")
+            # 每 20 次 × 30s = 10 分鐘同步一次餘額
+            _balance_tick += 1
+            if _balance_tick >= 20:
+                _balance_tick = 0
+                try:
+                    await self.crypto.router.fetch_binance_balance()
+                except Exception as e:
+                    logger.error(f"定期餘額同步失敗: {e}")
             await asyncio.sleep(30)
     
     async def tick_both(

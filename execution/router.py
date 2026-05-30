@@ -58,6 +58,7 @@ class ExecutionRouter:
         ibkr_client=None,       # ib_insync.IB() 實例
     ):
         self.crypto_pool = crypto_pool_usdt
+        self._crypto_pool_last_known: float | None = None  # 最後一次從交易所拉到的真實餘額
         self.stock_pool = stock_pool_usd
         self.fee_rate_crypto = fee_rate_crypto
         self.fee_rate_stock = fee_rate_stock
@@ -280,10 +281,14 @@ class ExecutionRouter:
             usdt = balance.get("USDT", {}).get("free", None)
             if usdt is not None:
                 self.crypto_pool = float(usdt)
+                self._crypto_pool_last_known = float(usdt)
                 logger.info(f"✅ Binance 合約餘額: {usdt:.2f} USDT")
             return usdt
         except Exception as e:
             logger.error(f"Binance 合約餘額拉取失敗: {e}")
+            # 保留最後已知真實餘額，避免回退到 config 預設值
+            if self._crypto_pool_last_known is not None:
+                self.crypto_pool = self._crypto_pool_last_known
             return None
 
     async def check_tp1_and_close(self):
