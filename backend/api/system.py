@@ -90,6 +90,7 @@ async def server_ip():
         return {"outbound_ip": None, "error": str(e)}
 
 
+@router.get("/debug")
 async def debug_status(orchestrator=Depends(get_orchestrator)):
     """診斷端點 — 顯示 tick loop 狀態"""
     import httpx
