@@ -48,6 +48,7 @@
   <div class="tabs">
     <div class="tab active-crypto" id="tab-crypto" onclick="switchPool('crypto')">加密池 · 18 席</div>
     <div class="tab" id="tab-stock" onclick="switchPool('stock')">美股池 · 18 席</div>
+    <div class="tab" id="tab-backtest" onclick="switchPool('backtest')" style="background:#1a1a24;color:#a78bfa;border-color:#7c3aed">📊 回測報告</div>
   </div>
   <div class="status"><span class="dot"></span>更新時間 <span id="updated">—</span></div>
   <div class="grid" id="root"></div>
@@ -59,12 +60,48 @@ function switchPool(p){
   POOL = p;
   document.getElementById("tab-crypto").className = "tab" + (p==="crypto"?" active-crypto":"");
   document.getElementById("tab-stock").className = "tab" + (p==="stock"?" active-stock":"");
+  document.getElementById("tab-backtest").style.background = p==="backtest"?"#2e1065":"#1a1a24";
+  if(p==="backtest"){ runBacktest(); return; }
   refresh();
 }
 function fmt(n,d=2){ return (n==null||isNaN(n))?"—":Number(n).toLocaleString(undefined,{minimumFractionDigits:d,maximumFractionDigits:d}); }
 function pct(n){ return (n==null||isNaN(n))?"—":(n*100).toFixed(1)+"%"; }
 
+async function runBacktest(){
+  document.getElementById("root").innerHTML = `<div class="card" style="grid-column:1/-1"><div style="color:#a78bfa;font-size:15px;padding:20px">⏳ 正在對 18 席分析師跑 walk-forward 回測（BTCUSDT 1000根K棒）…約需 15-30 秒</div></div>`;
+  try{
+    const r = await fetch(`/api/crypto/backtest?symbol=BTCUSDT&t=${Date.now()}`);
+    const d = await r.json();
+    if(d.error){ document.getElementById("root").innerHTML=`<div class="card">${d.error}</div>`; return; }
+    const rows = d.results.map(b=> b.error
+      ? `<tr><td class="name" style="color:#a78bfa">${b.name}</td><td>${b.school}</td><td colspan="6" style="color:#f87171">${b.error}</td></tr>`
+      : `<tr>
+          <td class="name" style="color:#a78bfa">${b.name}</td>
+          <td>${b.school}</td>
+          <td class="${b.win_rate>=55?'pnl-pos':b.win_rate>=45?'':'pnl-neg'}">${b.win_rate}%</td>
+          <td class="${b.sharpe>=1?'pnl-pos':b.sharpe>=0?'':'pnl-neg'}">${fmt(b.sharpe)}</td>
+          <td>${b.total_trades}</td>
+          <td class="pnl-neg">-${b.max_drawdown_pct}%</td>
+          <td class="${b.oos_consistency>=60?'pnl-pos':''}">${b.oos_consistency}%</td>
+          <td>${b.passed?'<span style="color:#34d399">✅ 通過</span>':'<span style="color:#6b7280">觀察</span>'}</td>
+        </tr>`
+    ).join("");
+    document.getElementById("root").innerHTML = `
+      <div class="card" style="grid-column:1/-1">
+        <h2>📊 Walk-Forward 回測報告 · ${d.symbol} · ${d.candles} 根K棒 · ${d.bots_passed}/${d.bots_total} 席通過</h2>
+        <table>
+          <tr><th>分析師</th><th>學派</th><th>勝率</th><th>夏普</th><th>交易數</th><th>最大回撤</th><th>OOS一致性</th><th>結果</th></tr>
+          ${rows}
+        </table>
+        <div style="color:#6b7280;font-size:12px;margin-top:12px">OOS一致性 = 樣本外正報酬段數比例 · 資料區間約 41 天 · 門檻：勝率≥45% / 夏普≥0.5 / 回撤≤25%</div>
+      </div>`;
+  }catch(e){
+    document.getElementById("root").innerHTML=`<div class="card">回測失敗: ${e}</div>`;
+  }
+}
+
 async function refresh(){
+  if(POOL==="backtest") return;
   try{
     const r = await fetch(`/api/${POOL}/snapshot?t=${Date.now()}`);
     const d = await r.json();
