@@ -6,7 +6,7 @@
 from typing import Optional
 import numpy as np
 import pandas as pd
-from datetime import datetime
+from datetime import datetime, timezone
 from ..base import BaseStrategy, Signal
 
 
@@ -84,7 +84,7 @@ class VolterraAuction(BaseStrategy):
                 side="LONG", entry_price=entry, stop_loss=sl,
                 take_profit=[poc, vah],
                 confidence=0.65, timeframe=self.DEFAULT_TIMEFRAME,
-                timestamp=datetime.now(),
+                timestamp=datetime.now(timezone.utc),
                 rationale=f"價格跌破 VAL={val:.2f},均值回歸至 POC={poc:.2f}/VAH={vah:.2f}",
             )
         # 突破 VAH 回落 → 做空回到 POC
@@ -97,7 +97,7 @@ class VolterraAuction(BaseStrategy):
                 side="SHORT", entry_price=entry, stop_loss=sl,
                 take_profit=[poc, val],
                 confidence=0.65, timeframe=self.DEFAULT_TIMEFRAME,
-                timestamp=datetime.now(),
+                timestamp=datetime.now(timezone.utc),
                 rationale=f"價格突破 VAH={vah:.2f},均值回歸至 POC={poc:.2f}/VAL={val:.2f}",
             )
         return None
@@ -148,7 +148,7 @@ class AthenaProfile(BaseStrategy):
                 side="LONG", entry_price=entry, stop_loss=sl,
                 take_profit=[entry + tp_dist * 0.5, entry + tp_dist],
                 confidence=0.7, timeframe=self.DEFAULT_TIMEFRAME,
-                timestamp=datetime.now(),
+                timestamp=datetime.now(timezone.utc),
                 rationale=f"Composite Profile 上緣突破 {composite_high:.2f},Balance Area 終結",
             )
         if breakout_short:
@@ -161,7 +161,7 @@ class AthenaProfile(BaseStrategy):
                 side="SHORT", entry_price=entry, stop_loss=sl,
                 take_profit=[entry - tp_dist * 0.5, entry - tp_dist],
                 confidence=0.7, timeframe=self.DEFAULT_TIMEFRAME,
-                timestamp=datetime.now(),
+                timestamp=datetime.now(timezone.utc),
                 rationale=f"Composite Profile 下緣破位 {composite_low:.2f}",
             )
         return None
@@ -214,7 +214,7 @@ class TempestOrderFlow(BaseStrategy):
                 take_profit=[entry + tp_dist * 0.5, entry + tp_dist],
                 confidence=min(0.9, 0.5 + latest_z * 0.1),
                 timeframe=self.DEFAULT_TIMEFRAME,
-                timestamp=datetime.now(),
+                timestamp=datetime.now(timezone.utc),
                 rationale=f"Footprint 大量主動買盤吸收完成,Delta z={latest_z:.2f}",
             )
         if latest_z < -p["delta_threshold_zscore"] and price_change_pct > -0.002:
@@ -228,7 +228,7 @@ class TempestOrderFlow(BaseStrategy):
                 take_profit=[entry - tp_dist * 0.5, entry - tp_dist],
                 confidence=min(0.9, 0.5 + abs(latest_z) * 0.1),
                 timeframe=self.DEFAULT_TIMEFRAME,
-                timestamp=datetime.now(),
+                timestamp=datetime.now(timezone.utc),
                 rationale=f"Footprint 大量主動賣盤吸收完成,Delta z={latest_z:.2f}",
             )
         return None
@@ -277,7 +277,7 @@ class RiptideCVD(BaseStrategy):
                 side="LONG", entry_price=entry, stop_loss=sl,
                 take_profit=[entry + tp_dist],
                 confidence=0.62, timeframe=self.DEFAULT_TIMEFRAME,
-                timestamp=datetime.now(),
+                timestamp=datetime.now(timezone.utc),
                 rationale="CVD 看漲背離:價格新低但累積買賣差未跟隨",
             )
         # 看跌背離
@@ -292,7 +292,7 @@ class RiptideCVD(BaseStrategy):
                 side="SHORT", entry_price=entry, stop_loss=sl,
                 take_profit=[entry - tp_dist],
                 confidence=0.62, timeframe=self.DEFAULT_TIMEFRAME,
-                timestamp=datetime.now(),
+                timestamp=datetime.now(timezone.utc),
                 rationale="CVD 看跌背離:價格新高但累積買賣差未跟隨",
             )
         return None

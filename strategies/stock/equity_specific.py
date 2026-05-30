@@ -70,7 +70,7 @@ class EarningsHawk(BaseStrategy):
                         take_profit=[entry + tp_dist],
                         confidence=0.65,
                         timeframe=self.DEFAULT_TIMEFRAME,
-                        timestamp=datetime.now(),
+                        timestamp=datetime.now(timezone.utc),
                         rationale=f"PEAD 正向漂移 — 財報超預期 {earnings_surprise*100:.1f}%,跳空守穩",
                     )
             elif earnings_surprise < -p["surprise_threshold_pct"]:
@@ -86,7 +86,7 @@ class EarningsHawk(BaseStrategy):
                         take_profit=[entry - tp_dist],
                         confidence=0.65,
                         timeframe=self.DEFAULT_TIMEFRAME,
-                        timestamp=datetime.now(),
+                        timestamp=datetime.now(timezone.utc),
                         rationale=f"PEAD 負向漂移 — 財報不及預期 {earnings_surprise*100:.1f}%",
                     )
         return None
@@ -145,7 +145,7 @@ class GammaTide(BaseStrategy):
                         take_profit=[max_pain],
                         confidence=0.62,
                         timeframe=self.DEFAULT_TIMEFRAME,
-                        timestamp=datetime.now(),
+                        timestamp=datetime.now(timezone.utc),
                         rationale=f"正 Gamma 環境 GEX=${gex/1e9:.1f}B,OpEx 週吸引至 Max Pain ${max_pain:.2f}",
                     )
                 else:
@@ -158,7 +158,7 @@ class GammaTide(BaseStrategy):
                         take_profit=[max_pain],
                         confidence=0.62,
                         timeframe=self.DEFAULT_TIMEFRAME,
-                        timestamp=datetime.now(),
+                        timestamp=datetime.now(timezone.utc),
                         rationale=f"正 Gamma + OpEx,吸引上行至 Max Pain ${max_pain:.2f}",
                     )
         
@@ -176,7 +176,7 @@ class GammaTide(BaseStrategy):
                     take_profit=[entry + tp_dist * 0.5, entry + tp_dist],
                     confidence=0.7,
                     timeframe=self.DEFAULT_TIMEFRAME,
-                    timestamp=datetime.now(),
+                    timestamp=datetime.now(timezone.utc),
                     rationale=f"負 Gamma 環境 GEX=${gex/1e9:.1f}B,上破 GEX flip ${flip:.2f} 追勢",
                 )
             if price < flip * 0.998 and data["close"].iloc[-2] >= flip:
@@ -190,7 +190,7 @@ class GammaTide(BaseStrategy):
                     take_profit=[entry - tp_dist * 0.5, entry - tp_dist],
                     confidence=0.7,
                     timeframe=self.DEFAULT_TIMEFRAME,
-                    timestamp=datetime.now(),
+                    timestamp=datetime.now(timezone.utc),
                     rationale=f"負 Gamma 環境,下破 GEX flip ${flip:.2f} 加速下跌",
                 )
         return None
@@ -258,7 +258,7 @@ class RotationSage(BaseStrategy):
                     take_profit=[entry + tp_dist * 0.5, entry + tp_dist],
                     confidence=0.65,
                     timeframe=self.DEFAULT_TIMEFRAME,
-                    timestamp=datetime.now(),
+                    timestamp=datetime.now(timezone.utc),
                     rationale=f"{symbol} 板塊輪入 — 排名從 {rank_old} 升至 {rank_now},突破 20D 高",
                 )
         # 輪出 — 排名持續下降 + 跌破 20D 低
@@ -275,7 +275,7 @@ class RotationSage(BaseStrategy):
                     take_profit=[entry - tp_dist * 0.5, entry - tp_dist],
                     confidence=0.65,
                     timeframe=self.DEFAULT_TIMEFRAME,
-                    timestamp=datetime.now(),
+                    timestamp=datetime.now(timezone.utc),
                     rationale=f"{symbol} 板塊輪出 — 排名從 {rank_old} 降至 {rank_now},跌破 20D 低",
                 )
         return None

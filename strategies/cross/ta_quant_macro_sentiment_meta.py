@@ -9,7 +9,7 @@ AI 元 1 席:Meta Ensemble
 from typing import Optional
 import numpy as np
 import pandas as pd
-from datetime import datetime
+from datetime import datetime, timezone
 from ..base import BaseStrategy, Signal
 
 
@@ -58,7 +58,7 @@ class IchimokuSage(BaseStrategy):
                 side="LONG", entry_price=entry, stop_loss=sl,
                 take_profit=[entry + tp_dist * 0.5, entry + tp_dist],
                 confidence=0.68, timeframe=self.DEFAULT_TIMEFRAME,
-                timestamp=datetime.now(),
+                timestamp=datetime.now(timezone.utc),
                 rationale="一目三條件成立:價在雲上、雲為綠、轉換上穿基準",
             )
         # 空頭鏡像
@@ -73,7 +73,7 @@ class IchimokuSage(BaseStrategy):
                 side="SHORT", entry_price=entry, stop_loss=sl,
                 take_profit=[entry - tp_dist * 0.5, entry - tp_dist],
                 confidence=0.68, timeframe=self.DEFAULT_TIMEFRAME,
-                timestamp=datetime.now(),
+                timestamp=datetime.now(timezone.utc),
                 rationale="一目空頭三條件成立",
             )
         return None
@@ -128,7 +128,7 @@ class FibonacciTide(BaseStrategy):
                         take_profit=[swing_high, entry + tp_dist],
                         confidence=0.55 + (0.1 if fib == 0.618 else 0),
                         timeframe=self.DEFAULT_TIMEFRAME,
-                        timestamp=datetime.now(),
+                        timestamp=datetime.now(timezone.utc),
                         rationale=f"上升趨勢回撤至 Fib {fib} = {level:.2f}",
                     )
         else:
@@ -145,7 +145,7 @@ class FibonacciTide(BaseStrategy):
                         take_profit=[swing_low, entry - tp_dist],
                         confidence=0.55 + (0.1 if fib == 0.618 else 0),
                         timeframe=self.DEFAULT_TIMEFRAME,
-                        timestamp=datetime.now(),
+                        timestamp=datetime.now(timezone.utc),
                         rationale=f"下降趨勢反彈至 Fib {fib} = {level:.2f}",
                     )
         return None
@@ -198,7 +198,7 @@ class BayesMeanRev(BaseStrategy):
                 take_profit=[latest_ma],
                 confidence=min(0.85, 0.5 + abs(latest_z) * 0.1),
                 timeframe=self.DEFAULT_TIMEFRAME,
-                timestamp=datetime.now(),
+                timestamp=datetime.now(timezone.utc),
                 rationale=f"z-score {latest_z:.2f} 極端低,均值回歸目標 MA={latest_ma:.2f}",
             )
         if latest_z > p["entry_zscore"]:
@@ -211,7 +211,7 @@ class BayesMeanRev(BaseStrategy):
                 take_profit=[latest_ma],
                 confidence=min(0.85, 0.5 + latest_z * 0.1),
                 timeframe=self.DEFAULT_TIMEFRAME,
-                timestamp=datetime.now(),
+                timestamp=datetime.now(timezone.utc),
                 rationale=f"z-score {latest_z:.2f} 極端高,均值回歸目標 MA={latest_ma:.2f}",
             )
         return None
@@ -275,7 +275,7 @@ class MarkovRegime(BaseStrategy):
                 side="LONG", entry_price=entry, stop_loss=sl,
                 take_profit=[entry + tp_dist * 0.4, entry + tp_dist * 0.7, entry + tp_dist],
                 confidence=0.62, timeframe=self.DEFAULT_TIMEFRAME,
-                timestamp=datetime.now(),
+                timestamp=datetime.now(timezone.utc),
                 rationale=f"體制切換 {prev_regime}→bull,趨勢跟隨",
             )
         if regime == "bear":
@@ -288,7 +288,7 @@ class MarkovRegime(BaseStrategy):
                 side="SHORT", entry_price=entry, stop_loss=sl,
                 take_profit=[entry - tp_dist * 0.4, entry - tp_dist * 0.7, entry - tp_dist],
                 confidence=0.62, timeframe=self.DEFAULT_TIMEFRAME,
-                timestamp=datetime.now(),
+                timestamp=datetime.now(timezone.utc),
                 rationale=f"體制切換 {prev_regime}→bear",
             )
         return None
@@ -340,7 +340,7 @@ class MacroHawk(BaseStrategy):
                 side="LONG", entry_price=entry, stop_loss=sl,
                 take_profit=[entry + tp_dist * 0.5, entry + tp_dist],
                 confidence=0.6, timeframe=self.DEFAULT_TIMEFRAME,
-                timestamp=datetime.now(),
+                timestamp=datetime.now(timezone.utc),
                 rationale=f"Risk-on:DXY {dxy_chg*100:.2f}%、VIX {vix}、利率穩",
             )
         if risk_off:
@@ -353,7 +353,7 @@ class MacroHawk(BaseStrategy):
                 side="SHORT", entry_price=entry, stop_loss=sl,
                 take_profit=[entry - tp_dist * 0.5, entry - tp_dist],
                 confidence=0.6, timeframe=self.DEFAULT_TIMEFRAME,
-                timestamp=datetime.now(),
+                timestamp=datetime.now(timezone.utc),
                 rationale=f"Risk-off:DXY/利率/VIX 預警",
             )
         return None
@@ -398,7 +398,7 @@ class PulseSentiment(BaseStrategy):
                 side="LONG", entry_price=entry, stop_loss=sl,
                 take_profit=[entry + tp_dist],
                 confidence=0.55, timeframe=self.DEFAULT_TIMEFRAME,
-                timestamp=datetime.now(),
+                timestamp=datetime.now(timezone.utc),
                 rationale=f"情緒指數 {sentiment:.2f} 偏多 + 社群放量",
             )
         # 反向:極端情緒 (>0.85 或 <-0.85) — 通常為頂/底
@@ -412,7 +412,7 @@ class PulseSentiment(BaseStrategy):
                 side="SHORT", entry_price=entry, stop_loss=sl,
                 take_profit=[entry - tp_dist],
                 confidence=0.5, timeframe=self.DEFAULT_TIMEFRAME,
-                timestamp=datetime.now(),
+                timestamp=datetime.now(timezone.utc),
                 rationale=f"情緒過熱 {sentiment:.2f} 反向操作",
             )
         if sentiment < -p["contrarian_threshold"]:
@@ -425,7 +425,7 @@ class PulseSentiment(BaseStrategy):
                 side="LONG", entry_price=entry, stop_loss=sl,
                 take_profit=[entry + tp_dist],
                 confidence=0.5, timeframe=self.DEFAULT_TIMEFRAME,
-                timestamp=datetime.now(),
+                timestamp=datetime.now(timezone.utc),
                 rationale=f"情緒過冷 {sentiment:.2f} 反向操作",
             )
         return None
@@ -487,7 +487,7 @@ class MetaEnsemble(BaseStrategy):
                 side="LONG", entry_price=entry, stop_loss=best_sl,
                 take_profit=[entry + tp_dist * 0.5, entry + tp_dist],
                 confidence=min(0.95, 0.6 + long_score * 0.1),
-                timeframe="multi", timestamp=datetime.now(),
+                timeframe="multi", timestamp=datetime.now(timezone.utc),
                 rationale=f"Meta 共識多:{len(long_signals)} 席跨 {long_schools} 派,加權分 {long_score:.2f}",
                 metadata={"contributors": [s.bot_name for s in long_signals]},
             )
@@ -501,7 +501,7 @@ class MetaEnsemble(BaseStrategy):
                 side="SHORT", entry_price=entry, stop_loss=best_sl,
                 take_profit=[entry - tp_dist * 0.5, entry - tp_dist],
                 confidence=min(0.95, 0.6 + short_score * 0.1),
-                timeframe="multi", timestamp=datetime.now(),
+                timeframe="multi", timestamp=datetime.now(timezone.utc),
                 rationale=f"Meta 共識空:{len(short_signals)} 席跨 {short_schools} 派,加權分 {short_score:.2f}",
                 metadata={"contributors": [s.bot_name for s in short_signals]},
             )

@@ -5,7 +5,7 @@ SMC 學派 — Smart Money Concept
 from typing import Optional
 import numpy as np
 import pandas as pd
-from datetime import datetime
+from datetime import datetime, timezone
 from ..base import BaseStrategy, Signal
 
 
@@ -68,7 +68,7 @@ class SMCAlpha(BaseStrategy):
                     take_profit=[entry + tp_dist * 0.5, entry + tp_dist],
                     confidence=min(0.9, 0.5 + vol_z * 0.1),
                     timeframe=self.DEFAULT_TIMEFRAME,
-                    timestamp=datetime.now(),
+                    timestamp=datetime.now(timezone.utc),
                     rationale=f"流動性掃過 swing low @ {swing_low:.2f},OB 回測 + 放量 z={vol_z:.2f}",
                 )
         
@@ -87,7 +87,7 @@ class SMCAlpha(BaseStrategy):
                     take_profit=[entry - tp_dist * 0.5, entry - tp_dist],
                     confidence=min(0.9, 0.5 + vol_z * 0.1),
                     timeframe=self.DEFAULT_TIMEFRAME,
-                    timestamp=datetime.now(),
+                    timestamp=datetime.now(timezone.utc),
                     rationale=f"流動性掃過 swing high @ {swing_high:.2f},OB 回測 + 放量 z={vol_z:.2f}",
                 )
         return None
@@ -147,7 +147,7 @@ class SMCBeta(BaseStrategy):
                 side="LONG", entry_price=entry, stop_loss=sl,
                 take_profit=[entry + tp_dist * 0.4, entry + tp_dist * 0.7, entry + tp_dist],
                 confidence=0.72, timeframe=self.DEFAULT_TIMEFRAME,
-                timestamp=datetime.now(),
+                timestamp=datetime.now(timezone.utc),
                 rationale=f"BOS 多頭結構破前高 {prev_high:.2f},EMA{p['trend_ema']} 確認趨勢",
             )
         if trend_dn and (recent_closes < prev_low).all():
@@ -160,7 +160,7 @@ class SMCBeta(BaseStrategy):
                 side="SHORT", entry_price=entry, stop_loss=sl,
                 take_profit=[entry - tp_dist * 0.4, entry - tp_dist * 0.7, entry - tp_dist],
                 confidence=0.72, timeframe=self.DEFAULT_TIMEFRAME,
-                timestamp=datetime.now(),
+                timestamp=datetime.now(timezone.utc),
                 rationale=f"BOS 空頭結構破前低 {prev_low:.2f}",
             )
         return None
@@ -218,7 +218,7 @@ class SMCGamma(BaseStrategy):
                     side="LONG", entry_price=entry, stop_loss=sl,
                     take_profit=[entry + tp_dist],
                     confidence=0.6, timeframe=self.DEFAULT_TIMEFRAME,
-                    timestamp=datetime.now(),
+                    timestamp=datetime.now(timezone.utc),
                     rationale=f"Bullish FVG [{fvg['bottom']:.2f}~{fvg['top']:.2f}] 回填進場",
                 )
         for fvg in bearish_fvgs:
@@ -232,7 +232,7 @@ class SMCGamma(BaseStrategy):
                     side="SHORT", entry_price=entry, stop_loss=sl,
                     take_profit=[entry - tp_dist],
                     confidence=0.6, timeframe=self.DEFAULT_TIMEFRAME,
-                    timestamp=datetime.now(),
+                    timestamp=datetime.now(timezone.utc),
                     rationale=f"Bearish FVG [{fvg['bottom']:.2f}~{fvg['top']:.2f}] 回填進場",
                 )
         return None

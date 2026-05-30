@@ -6,7 +6,7 @@
 from typing import Optional
 import numpy as np
 import pandas as pd
-from datetime import datetime
+from datetime import datetime, timezone
 from ..base import BaseStrategy, Signal
 
 
@@ -62,7 +62,7 @@ class GlassmindOnChain(BaseStrategy):
                 side="LONG", entry_price=entry, stop_loss=sl,
                 take_profit=[entry + tp_dist],
                 confidence=0.65, timeframe=self.DEFAULT_TIMEFRAME,
-                timestamp=datetime.now(),
+                timestamp=datetime.now(timezone.utc),
                 rationale=f"鏈上淨流出 z={latest_flow_z:.2f},巨鯨活躍 z={latest_whale_z:.2f}",
             )
         # 看跌:大量資金流入交易所
@@ -76,7 +76,7 @@ class GlassmindOnChain(BaseStrategy):
                 side="SHORT", entry_price=entry, stop_loss=sl,
                 take_profit=[entry - tp_dist],
                 confidence=0.65, timeframe=self.DEFAULT_TIMEFRAME,
-                timestamp=datetime.now(),
+                timestamp=datetime.now(timezone.utc),
                 rationale=f"鏈上淨流入 z={latest_flow_z:.2f},巨鯨可能拋售",
             )
         return None
@@ -120,7 +120,7 @@ class MempoolMEV(BaseStrategy):
                 symbol="ETHUSDT", side="LONG", entry_price=entry, stop_loss=sl,
                 take_profit=[entry + tp_dist],
                 confidence=0.55, timeframe=self.DEFAULT_TIMEFRAME,
-                timestamp=datetime.now(),
+                timestamp=datetime.now(timezone.utc),
                 rationale=f"Gas 暴漲 z={gas_z.iloc[-1]:.2f},MEV 活躍={mev}",
             )
         return None
@@ -167,7 +167,7 @@ class ArbiterFunding(BaseStrategy):
                 side="SHORT", entry_price=entry, stop_loss=sl,
                 take_profit=[price * 0.985],
                 confidence=0.85, timeframe=self.DEFAULT_TIMEFRAME,
-                timestamp=datetime.now(),
+                timestamp=datetime.now(timezone.utc),
                 rationale=f"資金費率極端正 {fr*100:.3f}%,做空永續收取費率",
                 metadata={"hedge_required": True, "expected_funding_yield": fr * p["hold_periods"]},
             )
@@ -180,7 +180,7 @@ class ArbiterFunding(BaseStrategy):
                 side="LONG", entry_price=entry, stop_loss=sl,
                 take_profit=[price * 1.015],
                 confidence=0.85, timeframe=self.DEFAULT_TIMEFRAME,
-                timestamp=datetime.now(),
+                timestamp=datetime.now(timezone.utc),
                 rationale=f"資金費率極端負 {fr*100:.3f}%,做多永續收取費率",
                 metadata={"hedge_required": True, "expected_funding_yield": abs(fr) * p["hold_periods"]},
             )
@@ -234,7 +234,7 @@ class TriadCrossEx(BaseStrategy):
                 stop_loss=btc_usdt * 0.999,    # 套利幾乎不需止損,僅作為執行 timeout
                 take_profit=[btc_usdt * (1 + (path_a - 1) * 0.5)],
                 confidence=0.95, timeframe=self.DEFAULT_TIMEFRAME,
-                timestamp=datetime.now(),
+                timestamp=datetime.now(timezone.utc),
                 rationale=f"三角套利 USDT→BTC→ETH→USDT 淨利 {(path_a-1)*100:.3f}%",
                 metadata={"path": "USDT-BTC-ETH-USDT", "legs": 3, "expected_profit": path_a - 1},
             )
@@ -245,7 +245,7 @@ class TriadCrossEx(BaseStrategy):
                 stop_loss=eth_usdt * 0.999,
                 take_profit=[eth_usdt * (1 + (path_b - 1) * 0.5)],
                 confidence=0.95, timeframe=self.DEFAULT_TIMEFRAME,
-                timestamp=datetime.now(),
+                timestamp=datetime.now(timezone.utc),
                 rationale=f"三角套利 USDT→ETH→BTC→USDT 淨利 {(path_b-1)*100:.3f}%",
                 metadata={"path": "USDT-ETH-BTC-USDT", "legs": 3, "expected_profit": path_b - 1},
             )

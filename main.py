@@ -8,7 +8,7 @@ import asyncio
 import importlib
 import logging
 import os
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Literal
 import pandas as pd
 
@@ -361,7 +361,7 @@ class PoolCollective:
             content = random.choice(views)
             msg = {
                 "channel": self.chat_channel,
-                "timestamp": datetime.now().isoformat(),
+                "timestamp": datetime.now(timezone.utc).isoformat(),
                 "from": bot.name,
                 "school": getattr(bot, "SCHOOL", ""),
                 "symbol": symbol,
