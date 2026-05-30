@@ -41,17 +41,22 @@ class VolterraAuction(BaseStrategy):
         target = total_vol * self.params["value_area_pct"]
         cum = hist[poc_idx]
         lo, hi = poc_idx, poc_idx
-        while cum < target and (lo > 0 or hi < len(hist)-1):
-            left = hist[lo-1] if lo > 0 else 0
-            right = hist[hi+1] if hi < len(hist)-1 else 0
-            if left >= right:
+        while cum < target and (lo > 0 or hi < len(hist) - 1):
+            can_left = lo > 0
+            can_right = hi < len(hist) - 1
+            left = hist[lo - 1] if can_left else -np.inf
+            right = hist[hi + 1] if can_right else -np.inf
+            # 只往實際可移動的方向擴張，避免 lo/hi 越界造成無窮迴圈
+            if can_left and (not can_right or left >= right):
                 lo -= 1
-                cum += left
-            else:
+                cum += hist[lo]
+            elif can_right:
                 hi += 1
-                cum += right
+                cum += hist[hi]
+            else:
+                break
         val = edges[lo]
-        vah = edges[hi+1]
+        vah = edges[hi + 1]
         return poc, vah, val
     
     def _generate_signal(self, data: pd.DataFrame, context: dict) -> Optional[Signal]:

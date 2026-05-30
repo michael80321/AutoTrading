@@ -143,6 +143,13 @@ class ExecutionRouter:
             if market:
                 precision = market.get("precision", {}).get("amount", 3)
                 qty = round(order.qty, precision)
+            # 取整後若數量歸零，放棄下單避免送出無效訂單
+            if qty <= 0:
+                logger.warning(f"{order.symbol} 取整後數量為 0，跳過下單")
+                order.status = OrderStatus.REJECTED
+                return False
+            # 把實際下單數量寫回 order，確保後續平倉數量一致
+            order.qty = qty
 
             # 1. 市價開倉
             await self.binance.create_market_order(order.symbol, side, qty)

@@ -228,6 +228,7 @@ class PoolCollective:
         for bot_id, bot in self.bots.items():
             if self.evolution.bot_status.get(bot_id) not in ("active", "breeding"):
                 continue
+            produced_signal = False
             for symbol, data in market_data.items():
                 ctx = {**context_extras, "symbol": symbol}
                 try:
@@ -238,8 +239,14 @@ class PoolCollective:
                 if sig:
                     all_signals.append(sig)
                     self._broadcast_to_chat(sig)
-                else:
-                    self._broadcast_commentary(bot, symbol, data)
+                    produced_signal = True
+            # 完全沒出訊號的 bot，每輪只對「最活躍」的一個 symbol 發一則評論，避免洗版
+            if not produced_signal and market_data:
+                top_symbol = max(
+                    market_data,
+                    key=lambda s: abs(float(market_data[s]["close"].iloc[-1] / market_data[s]["close"].iloc[-2] - 1)),
+                )
+                self._broadcast_commentary(bot, top_symbol, market_data[top_symbol])
 
         # 第二輪：Meta 裁判
         if self.meta_bot:
