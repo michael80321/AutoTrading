@@ -28,6 +28,7 @@
   .chat { height:440px; overflow-y:auto; display:flex; flex-direction:column; gap:8px; font-size:13px; }
   .msg .who { font-weight:600; }
   .msg .school { color:#6b7280; font-size:11px; margin-left:6px; }
+  .msg .ts { color:#4b5563; font-size:11px; margin-left:8px; font-family:ui-monospace,monospace; }
   .msg .txt { color:#cbd5e1; margin-top:2px; line-height:1.45; }
   .msg.sig .txt { color:#fbbf24; }
   table { width:100%; border-collapse:collapse; font-size:13px; }
@@ -115,7 +116,7 @@ function render(d){
         <div class="chat" id="chat">
           ${chat.length ? chat.slice().reverse().map(m=>`
             <div class="msg ${m.confidence>0?'sig':''}">
-              <span class="who accent">${m.from}</span><span class="school">${m.school||""} · ${m.symbol||""}</span>
+              <span class="who accent">${m.from}</span><span class="school">${m.school||""} · ${m.symbol||""}</span><span class="ts">${m.timestamp?new Date(m.timestamp).toLocaleTimeString("zh-TW",{hour:"2-digit",minute:"2-digit",second:"2-digit"}):""}</span>
               <div class="txt">${m.content||""}</div>
             </div>`).join("") : `<div style="color:#6b7280;padding:14px">分析師評估中…（首次最多等 60 秒）</div>`}
         </div>
