@@ -105,6 +105,22 @@ async def debug_status(orchestrator=Depends(get_orchestrator)):
     exchange = orchestrator.crypto.router.binance
     exchange_name = type(exchange).__name__ if exchange else "none"
     last_tick = getattr(orchestrator.crypto, "_last_tick_at", None)
+
+    # 直接嘗試抓合約餘額，回傳結果或錯誤
+    balance_result = None
+    balance_error = None
+    if exchange is not None:
+        try:
+            bal = await exchange.fetch_balance({"type": "future"})
+            usdt = bal.get("USDT", {})
+            balance_result = {
+                "free": usdt.get("free"),
+                "used": usdt.get("used"),
+                "total": usdt.get("total"),
+            }
+        except Exception as e:
+            balance_error = str(e)
+
     return {
         "crypto_bots": len(orchestrator.crypto.bots),
         "stock_bots": len(orchestrator.stock.bots),
@@ -115,6 +131,8 @@ async def debug_status(orchestrator=Depends(get_orchestrator)):
         "crypto_pool_usdt": orchestrator.crypto.router.crypto_pool,
         "exchange_client": exchange_name,
         "exchange_connected": exchange is not None,
-        "bybit_api_reachable": binance_ok,
+        "binance_reachable": binance_ok,
+        "futures_balance": balance_result,
+        "futures_balance_error": balance_error,
         "ibkr_client_connected": orchestrator.stock.router.ibkr is not None,
     }
