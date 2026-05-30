@@ -283,36 +283,72 @@ class PoolCollective:
     def _broadcast_commentary(self, bot, symbol: str, data: "pd.DataFrame"):
         """無交易信號時，分析師發佈市場觀察（每輪每個 symbol 只發一次）"""
         import random
+        import numpy as np
         try:
             latest = data.iloc[-1]
             prev = data.iloc[-2]
             close = float(latest["close"])
+            high_20 = float(data["high"].rolling(20).max().iloc[-1])
+            low_20 = float(data["low"].rolling(20).min().iloc[-1])
             change_pct = (close - float(prev["close"])) / float(prev["close"]) * 100
             vol_ratio = float(latest["volume"]) / (float(data["volume"].rolling(20).mean().iloc[-1]) + 1e-9)
+            # 簡單 RSI-14
+            delta = data["close"].diff()
+            gain = delta.clip(lower=0).rolling(14).mean().iloc[-1]
+            loss = (-delta.clip(upper=0)).rolling(14).mean().iloc[-1]
+            rsi = 100 - 100 / (1 + gain / (loss + 1e-9))
+            # ATR
+            atr = float((data["high"] - data["low"]).rolling(14).mean().iloc[-1])
+            atr_pct = atr / close * 100
 
-            if change_pct > 0.5:
-                trend = f"↑ 上漲 {change_pct:.2f}%"
-                view_pool = [
-                    f"突破短期阻力，量能比 {vol_ratio:.2f}x，觀察延續性",
-                    f"動能偏多，等待回測確認進場機會",
-                    f"多方主導，關注 {close * 1.005:.2f} 壓力位",
+            school = getattr(bot, "SCHOOL", "")
+            # 依學派產生不同切入角度的評論
+            if school in ("SMC", "訂單流"):
+                if change_pct > 0.5:
+                    views = [
+                        f"[{symbol}] ↑ {change_pct:.2f}% · RSI {rsi:.0f} · 20H高 {high_20:.2f}，多頭結構延續，尋找 OB 回測進場",
+                        f"[{symbol}] ↑ {change_pct:.2f}% · 量比 {vol_ratio:.2f}x · 流動性積聚於 {high_20:.2f}，等待掃高反轉",
+                    ]
+                elif change_pct < -0.5:
+                    views = [
+                        f"[{symbol}] ↓ {change_pct:.2f}% · RSI {rsi:.0f} · 20H低 {low_20:.2f}，空頭 OB 壓制中，等待掃低訊號",
+                        f"[{symbol}] ↓ {change_pct:.2f}% · 量比 {vol_ratio:.2f}x · 賣壓持續，{low_20:.2f} 是關鍵支撐",
+                    ]
+                else:
+                    views = [
+                        f"[{symbol}] → {change_pct:+.2f}% · RSI {rsi:.0f} · 波動率 ATR {atr_pct:.2f}%，盤整中積累能量",
+                        f"[{symbol}] → 橫盤 · 量比 {vol_ratio:.2f}x · 等待 {high_20:.2f}/{low_20:.2f} 突破確認",
+                    ]
+            elif school in ("套利", "鏈上"):
+                funding_hint = "資金費率正常" if abs(change_pct) < 1 else ("資金費率偏高，空頭壓力" if change_pct < 0 else "資金費率偏低，多頭有利")
+                views = [
+                    f"[{symbol}] {change_pct:+.2f}% · {funding_hint} · 跨所價差監控中，暫無套利機會",
+                    f"[{symbol}] 量比 {vol_ratio:.2f}x · ATR {atr_pct:.2f}% · 鏈上淨流入觀察中，等待失衡點",
                 ]
-            elif change_pct < -0.5:
-                trend = f"↓ 下跌 {change_pct:.2f}%"
-                view_pool = [
-                    f"空方壓力浮現，量能比 {vol_ratio:.2f}x，留意支撐",
-                    f"動能偏空，等待止跌訊號再評估",
-                    f"熊方施壓，關注 {close * 0.995:.2f} 支撐位",
+            elif school in ("量化統計", "AI 元學派"):
+                views = [
+                    f"[{symbol}] RSI {rsi:.0f} · ATR {atr_pct:.2f}% · 波動率低，貝氏後驗方向不明，持觀望",
+                    f"[{symbol}] {change_pct:+.2f}% · 馬可夫狀態估算中 · 20H區間 [{low_20:.2f}, {high_20:.2f}]",
+                ]
+            elif school in ("傳統TA",):
+                views = [
+                    f"[{symbol}] RSI {rsi:.0f} · 一目均衡表雲層觀察中，{close:.2f} 位於 20H [{low_20:.2f}-{high_20:.2f}]",
+                    f"[{symbol}] {change_pct:+.2f}% · Fib 回撤位監控 · 量比 {vol_ratio:.2f}x，趨勢未確立",
+                ]
+            elif school in ("宏觀", "情緒"):
+                views = [
+                    f"[{symbol}] {change_pct:+.2f}% · 市場情緒中性 · RSI {rsi:.0f} · 等待宏觀催化劑",
+                    f"[{symbol}] 量比 {vol_ratio:.2f}x · 恐貪指數無極端讀數，短期偏震盪",
                 ]
             else:
-                trend = f"→ 橫盤 {change_pct:+.2f}%"
-                view_pool = [
-                    f"盤整區間，{symbol} 等待方向選擇",
-                    f"量能萎縮，暫無明確方向",
-                    f"觀望為主，突破方向確立後再行動",
-                ]
+                if change_pct > 0.5:
+                    views = [f"[{symbol}] ↑ {change_pct:.2f}% · RSI {rsi:.0f} · 量比 {vol_ratio:.2f}x，等待進場確認"]
+                elif change_pct < -0.5:
+                    views = [f"[{symbol}] ↓ {change_pct:.2f}% · RSI {rsi:.0f} · 量比 {vol_ratio:.2f}x，等待支撐"]
+                else:
+                    views = [f"[{symbol}] → {change_pct:+.2f}% · RSI {rsi:.0f} · ATR {atr_pct:.2f}%，盤整觀望"]
 
-            content = f"[{symbol}] {trend} · {random.choice(view_pool)}"
+            content = random.choice(views)
             msg = {
                 "channel": self.chat_channel,
                 "timestamp": datetime.now().isoformat(),

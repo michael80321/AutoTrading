@@ -98,7 +98,8 @@ class BaseStrategy(ABC):
     def compute_metrics(self, period_days: int = 30) -> BotMetrics:
         """計算當前績效"""
         if len(self.trade_log) < 5:
-            return BotMetrics(self.bot_id, 0, 0, 0, 0, 0, 0, len(self.trade_log), period_days)
+            # 無足夠歷史時給予中性預設值，讓新機器人可以參與共識
+            return BotMetrics(self.bot_id, 0.6, 0, 0, 0, 0, 0.3, len(self.trade_log), period_days)
         
         df = pd.DataFrame(self.trade_log)
         wins = df[df["pnl"] > 0]
