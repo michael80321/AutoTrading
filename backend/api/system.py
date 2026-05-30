@@ -56,6 +56,27 @@ async def emergency_halt(orchestrator=Depends(get_orchestrator)):
     return {"halted": True, "message": "所有新部位已暫停"}
 
 
+@router.get("/funding")
+async def funding_rates():
+    """查目前 4 個交易對的即時資金費率，確認套利分析師有資料可用"""
+    import httpx
+    from autotrading.backend.market_feed import fetch_funding_rate, CRYPTO_SYMBOLS
+    out = {}
+    async with httpx.AsyncClient() as c:
+        for sym in CRYPTO_SYMBOLS:
+            fr = await fetch_funding_rate(c, sym, limit=3)
+            if fr is not None and len(fr) > 0:
+                latest = float(fr.iloc[-1])
+                out[sym] = {
+                    "funding_rate": round(latest, 6),
+                    "annualized_pct": round(latest * 3 * 365 * 100, 2),  # 每日 3 次 × 365
+                    "last_3": [round(float(x), 6) for x in fr.tail(3).tolist()],
+                }
+            else:
+                out[sym] = {"error": "no data"}
+    return out
+
+
 @router.get("/test-feed")
 async def test_feed():
     """直接測試 Binance OHLCV 抓取，回傳原始結果用於診斷"""

@@ -17,6 +17,31 @@ OHLCV_LIMIT = 300
 TIMEFRAME = "1h"  # Binance klines interval 格式
 
 BINANCE_KLINE_URL = "https://api.binance.com/api/v3/klines"
+BINANCE_FUNDING_URL = "https://fapi.binance.com/fapi/v1/fundingRate"
+
+
+async def fetch_funding_rate(client: httpx.AsyncClient, symbol: str, limit: int = 100) -> pd.Series | None:
+    """抓 Binance 永續合約資金費率歷史（每 8 小時一筆），回傳以時間為索引的 Series。"""
+    try:
+        resp = await client.get(
+            BINANCE_FUNDING_URL,
+            params={"symbol": symbol, "limit": limit},
+            timeout=10.0,
+        )
+        if resp.status_code != 200:
+            logger.warning(f"Funding rate {symbol} HTTP {resp.status_code}")
+            return None
+        raw = resp.json()
+        if not raw:
+            return None
+        fr = pd.DataFrame(raw)
+        fr["fundingTime"] = pd.to_datetime(fr["fundingTime"], unit="ms", utc=True)
+        fr["fundingRate"] = fr["fundingRate"].astype(float)
+        fr.set_index("fundingTime", inplace=True)
+        return fr["fundingRate"]
+    except Exception as e:
+        logger.error(f"fetch_funding_rate {symbol} 失敗: {e}")
+        return None
 
 
 async def fetch_ohlcv(client: httpx.AsyncClient, symbol: str, interval: str = "1h", limit: int = 300) -> pd.DataFrame | None:
@@ -36,6 +61,12 @@ async def fetch_ohlcv(client: httpx.AsyncClient, symbol: str, interval: str = "1
             df[col] = df[col].astype(float)
         df["open_time"] = pd.to_datetime(df["open_time"], unit="ms", utc=True)
         df.set_index("open_time", inplace=True)
+
+        # 合併資金費率：8H 一筆，前向填補到每根 1H K 棒
+        funding = await fetch_funding_rate(client, symbol)
+        if funding is not None and len(funding) > 0:
+            df["funding_rate"] = funding.reindex(df.index, method="ffill")
+            df["funding_rate"] = df["funding_rate"].bfill().fillna(0.0)
         return df
     except Exception as e:
         logger.error(f"fetch_ohlcv {symbol} 失敗: {e}")
