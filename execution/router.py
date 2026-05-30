@@ -177,16 +177,22 @@ class ExecutionRouter:
             return False
     
     async def _submit_ibkr(self, order: ExecutionOrder) -> bool:
-        """提交至 IBKR — Bracket Order (進場 + 止損 + 止盈)"""
+        """提交至 IBKR — 若無連線則以虛擬盤模擬成交"""
         if self.ibkr is None:
-            logger.info(f"[DRY-RUN] IBKR {order.symbol} {order.side} qty={order.qty}")
+            # 虛擬盤：立即以進場價模擬成交
+            order.status = OrderStatus.FILLED
+            order.filled_at = datetime.now()
+            order.fees_paid = order.qty * order.entry_price * self.fee_rate_stock
+            logger.info(f"[PAPER] 美股 {order.symbol} {order.side} qty={order.qty:.4f} "
+                        f"entry={order.entry_price:.2f} SL={order.stop_loss:.2f} "
+                        f"TP={order.take_profit[0]:.2f}")
             return True
         try:
             from ib_insync import Stock, MarketOrder, StopOrder, LimitOrder
             contract = Stock(order.symbol, "SMART", "USD")
             action = "BUY" if order.side == "LONG" else "SELL"
             opp_action = "SELL" if action == "BUY" else "BUY"
-            
+
             parent = MarketOrder(action, order.qty, transmit=False)
             sl_order = StopOrder(opp_action, order.qty, order.stop_loss,
                                  parentId=parent.orderId, transmit=False)
@@ -197,7 +203,7 @@ class ExecutionRouter:
                                   parentId=parent.orderId,
                                   transmit=(i == len(order.take_profit) - 1))
                 tp_orders.append(tp_o)
-            
+
             self.ibkr.placeOrder(contract, parent)
             self.ibkr.placeOrder(contract, sl_order)
             for tp_o in tp_orders:
@@ -208,6 +214,38 @@ class ExecutionRouter:
             logger.error(f"IBKR 下單失敗:{e}")
             order.status = OrderStatus.REJECTED
             return False
+
+    async def check_stock_paper_sl_tp(self, market_data: dict) -> None:
+        """虛擬盤：每根 K 棒檢查美股倉位 SL/TP，並更新未實現 P&L"""
+        if self.ibkr is not None:
+            return  # 真實 IBKR 由交易所處理
+        for order_id, order in list(self.open_orders.items()):
+            if order.pool != "stock" or order.status not in (OrderStatus.FILLED, OrderStatus.PARTIALLY_FILLED):
+                continue
+            df = market_data.get(order.symbol)
+            if df is None or len(df) == 0:
+                continue
+            latest_close = float(df["close"].iloc[-1])
+            latest_high = float(df["high"].iloc[-1])
+            latest_low = float(df["low"].iloc[-1])
+
+            direction = 1 if order.side == "LONG" else -1
+            # 檢查 SL（用 low/high 而非 close，模擬日內觸及）
+            sl_hit = (order.side == "LONG" and latest_low <= order.stop_loss) or \
+                     (order.side == "SHORT" and latest_high >= order.stop_loss)
+            tp_hit = order.take_profit and (
+                (order.side == "LONG" and latest_high >= order.take_profit[0]) or
+                (order.side == "SHORT" and latest_low <= order.take_profit[0])
+            )
+
+            if sl_hit:
+                close_price = order.stop_loss
+                self.on_close(order_id, close_price, "SL")
+                logger.info(f"[PAPER] {order.symbol} SL 觸發 @ {close_price:.2f}")
+            elif tp_hit:
+                close_price = order.take_profit[0]
+                self.on_close(order_id, close_price, "TP1")
+                logger.info(f"[PAPER] {order.symbol} TP1 觸發 @ {close_price:.2f}")
     
     def on_fill(self, order_id: str, fill_price: float, fill_qty: float):
         """成交回調"""

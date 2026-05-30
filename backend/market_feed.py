@@ -147,6 +147,8 @@ async def stock_tick_loop(orchestrator, interval_seconds: int = 300):
                     "timeframe": "1H",
                 }
                 await orchestrator.stock.tick(market_data, context)
+                # 虛擬盤：每根 K 棒後檢查 SL/TP
+                await orchestrator.stock.router.check_stock_paper_sl_tp(market_data)
                 logger.info(f"✅ 美股 tick 完成 總聊天={len(orchestrator.stock.chat_messages)}")
             else:
                 logger.warning("⚠️ 美股本輪沒有可用數據，跳過 tick")
