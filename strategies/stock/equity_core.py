@@ -46,13 +46,17 @@ class VolterraEQ(BaseStrategy):
         total = hist.sum()
         target = total * p["value_area_pct"]
         cum, lo, hi = hist[poc_idx], poc_idx, poc_idx
-        while cum < target and (lo > 0 or hi < len(hist)-1):
-            left = hist[lo-1] if lo > 0 else 0
-            right = hist[hi+1] if hi < len(hist)-1 else 0
-            if left >= right:
-                lo -= 1; cum += left
+        while cum < target and (lo > 0 or hi < len(hist) - 1):
+            can_left = lo > 0
+            can_right = hi < len(hist) - 1
+            left = hist[lo - 1] if can_left else -np.inf
+            right = hist[hi + 1] if can_right else -np.inf
+            if can_left and (not can_right or left >= right):
+                lo -= 1; cum += hist[lo]
+            elif can_right:
+                hi += 1; cum += hist[hi]
             else:
-                hi += 1; cum += right
+                break
         val, vah = edges[lo], edges[hi+1]
         price = data["close"].iloc[-1]
         atr = (data["high"]-data["low"]).rolling(14).mean().iloc[-1]

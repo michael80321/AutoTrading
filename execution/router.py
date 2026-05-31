@@ -123,9 +123,14 @@ class ExecutionRouter:
             success = await self._submit_ibkr(order)
         
         if success:
-            order.status = OrderStatus.SUBMITTED
-            order.submitted_at = datetime.now()
-            self.open_orders[order.order_id] = order
+            # _submit_binance adds to open_orders directly (to prevent orphan on SL failure).
+            # _submit_ibkr paper path sets status=FILLED — preserve it.
+            if order.order_id not in self.open_orders:
+                if order.status not in (OrderStatus.FILLED, OrderStatus.PARTIALLY_FILLED):
+                    order.status = OrderStatus.SUBMITTED
+                if order.submitted_at is None:
+                    order.submitted_at = datetime.now()
+                self.open_orders[order.order_id] = order
             return order
         return None
     
@@ -137,39 +142,49 @@ class ExecutionRouter:
         try:
             side = "buy" if order.side == "LONG" else "sell"
             opp_side = "sell" if side == "buy" else "buy"
-            # 精度處理：合約數量需符合 lot size
-            markets = await self.binance.load_markets()
-            market = markets.get(order.symbol) or markets.get(order.symbol.replace("USDT", "/USDT"))
+            # 精度處理：只在首次或市場未快取時呼叫 load_markets
+            if not self.binance.markets:
+                await self.binance.load_markets()
+            market = self.binance.markets.get(order.symbol) or \
+                     self.binance.markets.get(order.symbol.replace("USDT", "/USDT"))
             qty = order.qty
             if market:
                 precision = market.get("precision", {}).get("amount", 3)
                 qty = round(order.qty, precision)
-            # 取整後若數量歸零，放棄下單避免送出無效訂單
             if qty <= 0:
                 logger.warning(f"{order.symbol} 取整後數量為 0，跳過下單")
                 order.status = OrderStatus.REJECTED
                 return False
-            # 把實際下單數量寫回 order，確保後續平倉數量一致
             order.qty = qty
 
-            # 1. 市價開倉
+            # 1. 市價開倉 — 成功後立即標記，避免孤兒倉位
             await self.binance.create_market_order(order.symbol, side, qty)
-
-            # 2. 止損單 STOP_MARKET（全倉 reduceOnly）
-            await self.binance.create_order(
-                order.symbol, "STOP_MARKET", opp_side, qty, None,
-                {"stopPrice": order.stop_loss, "reduceOnly": True},
-            )
-
-            # 3. 止盈單 TAKE_PROFIT_MARKET（TP1 = 全數平倉）
-            if order.take_profit:
-                await self.binance.create_order(
-                    order.symbol, "TAKE_PROFIT_MARKET", opp_side, qty, None,
-                    {"stopPrice": order.take_profit[0], "reduceOnly": True},
-                )
-
             order.fees_paid = qty * order.entry_price * self.fee_rate_crypto
-            logger.info(f"✅ 合約下單 {order.symbol} {order.side} qty={qty} SL={order.stop_loss} TP={order.take_profit[0] if order.take_profit else 'N/A'}")
+            order.status = OrderStatus.SUBMITTED
+            order.submitted_at = datetime.now()
+            self.open_orders[order.order_id] = order  # 先入帳，SL/TP 失敗也能追蹤
+
+            # 2. 止損單 STOP_MARKET
+            try:
+                await self.binance.create_order(
+                    order.symbol, "STOP_MARKET", opp_side, qty, None,
+                    {"stopPrice": order.stop_loss, "reduceOnly": True},
+                )
+            except Exception as e:
+                logger.error(f"⚠️ {order.symbol} SL 掛單失敗，倉位已開但無止損: {e}")
+
+            # 3. 止盈單 TAKE_PROFIT_MARKET
+            if order.take_profit:
+                try:
+                    await self.binance.create_order(
+                        order.symbol, "TAKE_PROFIT_MARKET", opp_side, qty, None,
+                        {"stopPrice": order.take_profit[0], "reduceOnly": True},
+                    )
+                except Exception as e:
+                    logger.error(f"⚠️ {order.symbol} TP 掛單失敗，倉位已開但無止盈: {e}")
+
+            logger.info(f"✅ 合約下單 {order.symbol} {order.side} qty={qty} "
+                        f"SL={order.stop_loss} TP={order.take_profit[0] if order.take_profit else 'N/A'}")
             return True
         except Exception as e:
             logger.error(f"Binance 合約下單失敗: {e}")
@@ -183,9 +198,9 @@ class ExecutionRouter:
             order.status = OrderStatus.FILLED
             order.filled_at = datetime.now()
             order.fees_paid = order.qty * order.entry_price * self.fee_rate_stock
+            tp_str = f"{order.take_profit[0]:.2f}" if order.take_profit else "N/A"
             logger.info(f"[PAPER] 美股 {order.symbol} {order.side} qty={order.qty:.4f} "
-                        f"entry={order.entry_price:.2f} SL={order.stop_loss:.2f} "
-                        f"TP={order.take_profit[0]:.2f}")
+                        f"entry={order.entry_price:.2f} SL={order.stop_loss:.2f} TP={tp_str}")
             return True
         try:
             from ib_insync import Stock, MarketOrder, StopOrder, LimitOrder
@@ -225,11 +240,9 @@ class ExecutionRouter:
             df = market_data.get(order.symbol)
             if df is None or len(df) == 0:
                 continue
-            latest_close = float(df["close"].iloc[-1])
             latest_high = float(df["high"].iloc[-1])
             latest_low = float(df["low"].iloc[-1])
 
-            direction = 1 if order.side == "LONG" else -1
             # 檢查 SL（用 low/high 而非 close，模擬日內觸及）
             sl_hit = (order.side == "LONG" and latest_low <= order.stop_loss) or \
                      (order.side == "SHORT" and latest_high >= order.stop_loss)
@@ -256,13 +269,15 @@ class ExecutionRouter:
         order.filled_at = datetime.now()
     
     def on_close(self, order_id: str, close_price: float, reason: str):
-        """部位關閉回調 — 計算 P&L"""
+        """部位關閉回調 — 計算 P&L（進場費已在 fees_paid，此處加出場費）"""
         order = self.open_orders.pop(order_id, None)
         if not order:
             return
         direction = 1 if order.side == "LONG" else -1
         gross_pnl = (close_price - order.entry_price) * order.qty * direction
-        order.realized_pnl = gross_pnl - order.fees_paid * 2  # 進場+出場兩次手續費
+        fee_rate = self.fee_rate_crypto if order.pool == "crypto" else self.fee_rate_stock
+        exit_fee = order.qty * close_price * fee_rate
+        order.realized_pnl = gross_pnl - order.fees_paid - exit_fee
         self.closed_orders.append(order)
         logger.info(f"關閉 {order.symbol} {reason} P&L={order.realized_pnl:.2f}")
     
@@ -350,16 +365,12 @@ class ExecutionRouter:
                 logger.error(f"TP1 檢查失敗 {order.symbol}: {e}")
 
     async def _execute_full_close(self, order: "ExecutionOrder", price: float, reason: str = "TP1"):
-        """全數平倉並移入 closed_orders"""
+        """全數平倉並移入 closed_orders — P&L 由 on_close 統一計算"""
         try:
             side = "sell" if order.side == "LONG" else "buy"
             await self.binance.create_market_order(
                 order.symbol, side, order.qty, None, {"reduceOnly": True}
             )
-            pnl = (price - order.entry_price) * order.qty * (1 if order.side == "LONG" else -1)
-            order.realized_pnl += pnl - order.qty * price * self.fee_rate_crypto
-            order.status = OrderStatus.FILLED
             self.on_close(order.order_id, price, reason)
-            logger.info(f"✅ {reason} 全數平倉 {order.symbol} qty={order.qty} price={price} PnL={pnl:.2f}")
         except Exception as e:
             logger.error(f"{reason} 平倉失敗 {order.symbol}: {e}")
