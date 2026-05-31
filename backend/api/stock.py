@@ -42,7 +42,7 @@ async def stock_positions(orchestrator=Depends(get_orchestrator)):
 @router.get("/chat")
 async def stock_chat(limit: int = 100, orchestrator=Depends(get_orchestrator)):
     msgs = orchestrator.stock.chat_messages
-    return {"channel": "#equities-floor", "messages": msgs[-limit:]}
+    return {"channel": "#equities-floor", "messages": msgs[-limit:] if limit > 0 else []}
 
 
 @router.get("/evolution")

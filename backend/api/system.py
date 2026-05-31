@@ -11,11 +11,12 @@ from .deps import get_orchestrator
 
 router = APIRouter()
 
-ADMIN_TOKEN = os.getenv("ADMIN_TOKEN", "change-me-in-production")
+_raw_token = os.getenv("ADMIN_TOKEN", "")
+ADMIN_TOKEN = _raw_token if _raw_token else None  # None = 未設定，拒絕所有請求
 
 
 def verify_admin(x_admin_token: str = Header(...)):
-    if x_admin_token != ADMIN_TOKEN:
+    if ADMIN_TOKEN is None or x_admin_token != ADMIN_TOKEN:
         raise HTTPException(status_code=403, detail="Invalid admin token")
 
 

@@ -122,9 +122,9 @@ class ConsensusEngine:
         else:
             stop_loss = float(min(s.stop_loss for s in qualified))
         
-        # TP 取所有信號 TP 的中位數
+        # TP1 = 最近目標（LONG: 最低TP先觸發；SHORT: 最高TP先觸發）
         all_tps = [tp for s in qualified for tp in s.take_profit]
-        tp_sorted = sorted(all_tps, reverse=(side=="LONG"))
+        tp_sorted = sorted(all_tps, reverse=(side == "SHORT"))
         take_profit = tp_sorted[:2]
         
         # 風險計算

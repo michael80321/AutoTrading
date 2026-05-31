@@ -48,7 +48,7 @@ async def crypto_positions(orchestrator=Depends(get_orchestrator)):
 @router.get("/chat")
 async def crypto_chat(limit: int = 100, orchestrator=Depends(get_orchestrator)):
     msgs = orchestrator.crypto.chat_messages
-    return {"channel": "#crypto-floor", "messages": msgs[-limit:]}
+    return {"channel": "#crypto-floor", "messages": msgs[-limit:] if limit > 0 else []}
 
 
 @router.get("/evolution")

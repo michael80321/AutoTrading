@@ -60,6 +60,7 @@ class ExecutionRouter:
         self.crypto_pool = crypto_pool_usdt
         self._crypto_pool_last_known: float | None = None  # 最後一次從交易所拉到的真實餘額
         self.stock_pool = stock_pool_usd
+        self.halted: bool = False  # 熔斷開關：True 時拒絕所有新訂單
         self.fee_rate_crypto = fee_rate_crypto
         self.fee_rate_stock = fee_rate_stock
         self.max_concurrent = max_concurrent_positions
@@ -79,12 +80,14 @@ class ExecutionRouter:
         return total - in_use
     
     async def submit(self, consensus_result, symbol: str) -> Optional[ExecutionOrder]:
-        """
-        從共識引擎接收 ConsensusResult,提交訂單
-        """
+        """從共識引擎接收 ConsensusResult，提交訂單"""
+        if self.halted:
+            logger.warning("熔斷中，拒絕新訂單")
+            return None
+
         pool = self._classify_pool(symbol)
         available = self._available_capital(pool)
-        
+
         if len([o for o in self.open_orders.values() if o.pool == pool]) >= self.max_concurrent:
             logger.warning(f"{pool} 池已達最大並發部位 {self.max_concurrent}")
             return None
@@ -344,10 +347,31 @@ class ExecutionRouter:
                 self.crypto_pool = self._crypto_pool_last_known
             return None
 
-    async def check_tp1_and_close(self):
-        """檢查開放倉位，TP1 達到時全部平倉"""
+    async def _reconcile_exchange_positions(self):
+        """對帳：把交易所已平倉的倉位從 open_orders 清除，防止幽靈訂單鎖死資金"""
         if self.binance is None:
             return
+        try:
+            positions = await self.binance.fetch_positions()
+            open_symbols = {p["symbol"] for p in positions if float(p.get("contracts", 0)) != 0}
+            for order_id, order in list(self.open_orders.items()):
+                if order.pool != "crypto":
+                    continue
+                ccxt_symbol = order.symbol.replace("USDT", "/USDT:USDT")
+                if ccxt_symbol not in open_symbols and order.symbol not in open_symbols:
+                    # 交易所已無此倉位（被 SL/TP 成交），視同關閉
+                    ticker = await self.binance.fetch_ticker(order.symbol)
+                    close_price = ticker["last"]
+                    logger.info(f"🔄 對帳：{order.symbol} 交易所已平倉，清除幽靈訂單 @ {close_price:.4f}")
+                    self.on_close(order_id, close_price, "EXCHANGE_CLOSE")
+        except Exception as e:
+            logger.warning(f"對帳失敗（非致命）: {e}")
+
+    async def check_tp1_and_close(self):
+        """檢查開放倉位，TP1 達到時全部平倉；同時對帳幽靈倉位"""
+        if self.binance is None:
+            return
+        await self._reconcile_exchange_positions()
         for order_id, order in list(self.open_orders.items()):
             if order.pool != "crypto" or not order.take_profit:
                 continue

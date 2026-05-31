@@ -456,13 +456,13 @@ class DualPoolOrchestrator:
         logger.info(f"✅ 雙池啟動完成")
         logger.info(f"   加密池:{len(self.crypto.bots)} 席 + Meta · ${self.config.capital.crypto_pool_total}")
         logger.info(f"   美股池:{len(self.stock.bots)} 席 + Meta · ${self.config.capital.stock_pool_total}")
-        # 啟動 TP1 背景輪詢（需要在事件循環中呼叫）
+        # 背景任務由 app.py _background_boot 統一啟動，initialize() 不重複建立
+        # 若在純同步測試環境呼叫則跳過
         try:
             asyncio.get_running_loop()
             asyncio.create_task(self._startup_balance_fetch())
-            asyncio.create_task(self._tp1_polling_loop())
         except RuntimeError:
-            pass  # 若在同步環境呼叫，跳過（lifespan 會處理）
+            pass
 
     async def _startup_balance_fetch(self):
         """啟動後 3 秒拉一次真實餘額，確保 UI 不顯示 config 預設值"""
@@ -539,7 +539,8 @@ class DualPoolOrchestrator:
         
         if abs(total_dd) > self.config.account_max_drawdown_pct:
             logger.critical(f"🚨 帳戶級熔斷觸發!總回撤 {total_dd*100:.1f}%,所有新部位暫停")
-            # 實作:呼叫 router.halt_new_orders() 等等
+            self.crypto.router.halted = True
+            self.stock.router.halted = True
     
     def get_full_snapshot(self) -> dict:
         """完整雙池快照給前端"""
