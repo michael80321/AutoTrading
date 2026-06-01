@@ -8,8 +8,11 @@ from collections import defaultdict
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Optional
+import logging
 import numpy as np
 from ..strategies.base import Signal, BotMetrics
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -81,16 +84,22 @@ class ConsensusEngine:
         relevant = [s for s in signals if s.symbol == symbol]
         if not relevant:
             return None
-        
+
         long_signals = [s for s in relevant if s.side == "LONG"]
         short_signals = [s for s in relevant if s.side == "SHORT"]
-        
+
         long_weight = sum(self.get_weight(s.bot_id, s.school) * s.confidence for s in long_signals)
         short_weight = sum(self.get_weight(s.bot_id, s.school) * s.confidence for s in short_signals)
-        
+
         long_schools = len({s.school for s in long_signals})
         short_schools = len({s.school for s in short_signals})
-        
+
+        logger.info(
+            f"[Consensus] {symbol} | LONG({long_schools}派 w={long_weight:.2f}) "
+            f"SHORT({short_schools}派 w={short_weight:.2f}) | "
+            f"訊號數 LONG={len(long_signals)} SHORT={len(short_signals)}"
+        )
+
         # 決定方向
         if long_weight > short_weight * 1.3:
             chosen = long_signals
@@ -103,17 +112,24 @@ class ConsensusEngine:
             total_weight = short_weight
             schools_n = short_schools
         else:
-            return None  # 方向不明
-        
+            logger.info(f"[Consensus] {symbol} ❌ 方向不明 (long={long_weight:.2f} short={short_weight:.2f}，差距未達 1.3x)")
+            return None
+
         # 過濾門檻
         if schools_n < self.min_aligned_schools:
+            logger.info(f"[Consensus] {symbol} ❌ 學派數不足 ({schools_n} < {self.min_aligned_schools}) — {[s.school for s in chosen]}")
             return None
         if total_weight < self.min_total_weight:
+            logger.info(f"[Consensus] {symbol} ❌ 加權分不足 ({total_weight:.2f} < {self.min_total_weight})")
             return None
         # 每席回測勝率門檻
         qualified = [s for s in chosen if bot_winrates.get(s.bot_id, 0) >= self.min_backtest_winrate]
         if len(qualified) < self.min_aligned_schools:
+            failed = [(s.bot_name, bot_winrates.get(s.bot_id, 0)) for s in chosen if bot_winrates.get(s.bot_id, 0) < self.min_backtest_winrate]
+            logger.info(f"[Consensus] {symbol} ❌ 勝率門檻不足 ({len(qualified)}/{len(chosen)} 通過) 失敗: {failed}")
             return None
+
+        logger.info(f"[Consensus] {symbol} ✅ {side} 通過！學派={schools_n} 加權={total_weight:.2f} 貢獻者={[s.bot_name for s in qualified]}")
         
         # 取信號平均進場 + 最緊的 SL + 加權 TP
         entry = float(np.mean([s.entry_price for s in qualified]))

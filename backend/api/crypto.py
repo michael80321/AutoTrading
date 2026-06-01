@@ -67,6 +67,85 @@ async def crypto_evolution(orchestrator=Depends(get_orchestrator)):
     }
 
 
+@router.get("/signal-debug")
+async def crypto_signal_debug(orchestrator=Depends(get_orchestrator)):
+    """
+    診斷端點：即時跑一輪訊號生成，回傳每個 bot 的狀態和共識拒絕原因。
+    用於排查「為何沒開單」。
+    """
+    import httpx
+    import pandas as pd
+    from ..market_feed import fetch_ohlcv, CRYPTO_SYMBOLS, TIMEFRAME, OHLCV_LIMIT
+
+    # 抓即時市場數據
+    async with httpx.AsyncClient() as client:
+        market_data = {}
+        for symbol in CRYPTO_SYMBOLS:
+            df = await fetch_ohlcv(client, symbol, TIMEFRAME, OHLCV_LIMIT)
+            if df is not None and len(df) >= 200:
+                market_data[symbol] = df
+
+    if not market_data:
+        return {"error": "無法取得市場數據"}
+
+    pool = orchestrator.crypto
+    bot_results = []
+    all_signals = []
+
+    for bot_id, bot in pool.bots.items():
+        bot_sigs = []
+        for symbol, data in market_data.items():
+            try:
+                sig = bot.signal(data, {"symbol": symbol})
+                if sig:
+                    bot_sigs.append({
+                        "symbol": sig.symbol, "side": sig.side,
+                        "confidence": round(sig.confidence, 3),
+                        "sl_dist_pct": round(abs(sig.entry_price - sig.stop_loss) / sig.entry_price * 100, 2),
+                    })
+                    all_signals.append(sig)
+            except Exception as e:
+                bot_sigs.append({"symbol": symbol, "error": str(e)})
+
+        metrics = bot.compute_metrics()
+        bot_results.append({
+            "id": bot_id, "name": bot.name, "school": pool.bot_schools.get(bot_id),
+            "status": pool.evolution.bot_status.get(bot_id),
+            "win_rate": metrics.win_rate, "trades": metrics.total_trades,
+            "signals_this_tick": bot_sigs,
+        })
+
+    # 跑共識
+    bot_winrates = {bid: bot.compute_metrics().win_rate for bid, bot in pool.bots.items()}
+    consensus_results = {}
+    for symbol in market_data:
+        sym_sigs = [s for s in all_signals if s.symbol == symbol]
+        long_s = [s for s in sym_sigs if s.side == "LONG"]
+        short_s = [s for s in sym_sigs if s.side == "SHORT"]
+        consensus = pool.consensus.aggregate(all_signals, bot_winrates, pool.config.capital.crypto_pool_total, symbol)
+        consensus_results[symbol] = {
+            "total_signals": len(sym_sigs),
+            "long_signals": len(long_s),
+            "short_signals": len(short_s),
+            "long_schools": list({s.school for s in long_s}),
+            "short_schools": list({s.school for s in short_s}),
+            "approved": consensus.approved if consensus else False,
+            "rationale": consensus.rationale if consensus else "未通過共識",
+        }
+
+    return {
+        "symbols": list(market_data.keys()),
+        "total_signals": len(all_signals),
+        "bots": bot_results,
+        "consensus": consensus_results,
+        "thresholds": {
+            "min_aligned_schools": pool.consensus.min_aligned_schools,
+            "min_total_weight": pool.consensus.min_total_weight,
+            "min_backtest_winrate": pool.consensus.min_backtest_winrate,
+        },
+    }
+
+
 @router.get("/backtest")
 async def crypto_backtest(symbol: str = "BTCUSDT", orchestrator=Depends(get_orchestrator)):
     """

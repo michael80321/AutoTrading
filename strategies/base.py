@@ -6,8 +6,11 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Literal, Optional
+import logging
 import numpy as np
 import pandas as pd
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -83,15 +86,18 @@ class BaseStrategy(ABC):
         ...
     
     def signal(self, data: pd.DataFrame, context: dict | None = None) -> Optional[Signal]:
-        """對外統一入口,含風控過濾"""
-        if len(data) < 200:                # 不足歷史拒絕出單
+        """對外統一入口，含風控過濾"""
+        if len(data) < 200:
             return None
         sig = self._generate_signal(data, context or {})
         if sig is None:
             return None
-        # 風控:止損距離不能 < 0.3% (避免 noise),不能 > 5% (避免過寬)
+        # 風控：止損距離 0.3%–5%
         sl_dist = abs(sig.entry_price - sig.stop_loss) / sig.entry_price
         if not (0.003 <= sl_dist <= 0.05):
+            logger.debug(
+                f"[{self.name}] {sig.symbol} SL 距離 {sl_dist*100:.2f}% 超出 0.3-5% 範圍，訊號丟棄"
+            )
             return None
         return sig
     
