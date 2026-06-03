@@ -240,7 +240,6 @@ class PoolCollective:
                     all_signals.append(sig)
                     self._broadcast_to_chat(sig)
                     produced_signal = True
-        logger.info(f"[{self.pool_name}] 本輪訊號數: {len(all_signals)} (來自 {len({s.bot_name for s in all_signals})} 席，{len({s.symbol for s in all_signals})} 個品種)")
             # 完全沒出訊號的 bot，每輪只對「最活躍」的一個 symbol 發一則評論，避免洗版
             if not produced_signal and market_data:
                 top_symbol = max(
@@ -248,6 +247,7 @@ class PoolCollective:
                     key=lambda s: abs(float(market_data[s]["close"].iloc[-1] / market_data[s]["close"].iloc[-2] - 1)),
                 )
                 self._broadcast_commentary(bot, top_symbol, market_data[top_symbol])
+        logger.info(f"[{self.pool_name}] 本輪訊號數: {len(all_signals)} (來自 {len({s.bot_name for s in all_signals})} 席，{len({s.symbol for s in all_signals})} 個品種)")
 
         # 第二輪：Meta 裁判
         if self.meta_bot:
