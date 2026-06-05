@@ -148,6 +148,9 @@ class PoolCollective:
         # 各池獨立聊天室
         self.chat_messages: list[dict] = []
         self.chat_channel = f"#{'crypto' if pool_name == 'crypto' else 'equities'}-floor"
+        # 跨時間窗口訊號緩衝：保留最近 signal_window_hours 小時內的訊號
+        self.signal_buffer: list[Signal] = []
+        self.signal_window_hours: int = 6
     
     def initialize_bots(self):
         """根據名冊載入 18 席 + 1 個 Meta 裁判"""
@@ -221,8 +224,19 @@ class PoolCollective:
             self.last_evolution_cycle = datetime.now()
 
     def _compute(self, market_data: dict, context_extras: dict) -> list:
-        """純同步：產生訊號、市場評論、Meta 投票、共識聚合。回傳待下單的 (consensus, symbol)。"""
-        all_signals: list[Signal] = []
+        """純同步：產生訊號、評論、Meta、跨時間窗口共識聚合。"""
+        from datetime import timezone as _tz
+        now_utc = datetime.now(_tz.utc)
+        cutoff = now_utc - __import__('datetime').timedelta(hours=self.signal_window_hours)
+
+        # 剪除過期緩衝訊號（訊號的 timestamp 是 UTC-aware）
+        self.signal_buffer = [
+            s for s in self.signal_buffer
+            if (s.timestamp.tzinfo is not None and s.timestamp >= cutoff)
+               or (s.timestamp.tzinfo is None)  # naive 保留（向後相容）
+        ]
+
+        current_signals: list[Signal] = []
 
         # 第一輪：18 席產生原始信號 + 市場評論
         for bot_id, bot in self.bots.items():
@@ -237,17 +251,15 @@ class PoolCollective:
                     logger.warning(f"[{self.pool_name}] {bot.name} signal() 錯誤: {e}")
                     sig = None
                 if sig:
-                    all_signals.append(sig)
+                    current_signals.append(sig)
                     self._broadcast_to_chat(sig)
                     produced_signal = True
-            # 完全沒出訊號的 bot，每輪只對「最活躍」的一個 symbol 發一則評論，避免洗版
             if not produced_signal and market_data:
                 top_symbol = max(
                     market_data,
                     key=lambda s: abs(float(market_data[s]["close"].iloc[-1] / market_data[s]["close"].iloc[-2] - 1)),
                 )
                 self._broadcast_commentary(bot, top_symbol, market_data[top_symbol])
-        logger.info(f"[{self.pool_name}] 本輪訊號數: {len(all_signals)} (來自 {len({s.bot_name for s in all_signals})} 席，{len({s.symbol for s in all_signals})} 個品種)")
 
         # 第二輪：Meta 裁判
         if self.meta_bot:
@@ -255,7 +267,7 @@ class PoolCollective:
             for symbol, data in market_data.items():
                 ctx = {
                     **context_extras, "symbol": symbol,
-                    "sub_signals": [s for s in all_signals if s.symbol == symbol],
+                    "sub_signals": [s for s in current_signals if s.symbol == symbol],
                     "bot_composite_scores": bot_scores,
                 }
                 try:
@@ -264,15 +276,32 @@ class PoolCollective:
                     logger.warning(f"[{self.pool_name}] Meta signal() 錯誤: {e}")
                     meta_sig = None
                 if meta_sig:
-                    all_signals.append(meta_sig)
+                    current_signals.append(meta_sig)
                     self._broadcast_to_chat(meta_sig)
 
-        # 第三輪：共識聚合
+        # 把本輪新訊號存入緩衝（去重：同 bot_id + symbol 只保留最新）
+        for sig in current_signals:
+            self.signal_buffer = [
+                s for s in self.signal_buffer
+                if not (s.bot_id == sig.bot_id and s.symbol == sig.symbol)
+            ]
+            self.signal_buffer.append(sig)
+
+        logger.info(
+            f"[{self.pool_name}] 本輪新訊號: {len(current_signals)}，"
+            f"緩衝窗口({self.signal_window_hours}h)內累積: {len(self.signal_buffer)}"
+        )
+
+        # 第三輪：共識聚合（使用窗口內所有訊號）
         approved = []
         bot_winrates = {bid: bot.compute_metrics().win_rate for bid, bot in self.bots.items()}
         total = self.config.capital.crypto_pool_total if self.pool_name == "crypto" else self.config.capital.stock_pool_total
+        # 已有開倉的 symbol 不重複下單
+        open_symbols = {o.symbol for o in self.router.open_orders.values() if o.pool == self.pool_name}
         for symbol in market_data:
-            consensus = self.consensus.aggregate(all_signals, bot_winrates, total, symbol)
+            if symbol in open_symbols:
+                continue
+            consensus = self.consensus.aggregate(self.signal_buffer, bot_winrates, total, symbol)
             if consensus and consensus.approved:
                 approved.append((consensus, symbol))
         return approved

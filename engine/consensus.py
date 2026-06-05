@@ -100,19 +100,17 @@ class ConsensusEngine:
             f"訊號數 LONG={len(long_signals)} SHORT={len(short_signals)}"
         )
 
-        # 決定方向
-        if long_weight > short_weight * 1.3:
-            chosen = long_signals
-            side = "LONG"
-            total_weight = long_weight
-            schools_n = long_schools
-        elif short_weight > long_weight * 1.3:
-            chosen = short_signals
-            side = "SHORT"
-            total_weight = short_weight
-            schools_n = short_schools
+        # 決定方向（1.1x 門檻 + 無衝突快速通道）
+        if long_weight > 0 and short_weight == 0:
+            chosen, side, total_weight, schools_n = long_signals, "LONG", long_weight, long_schools
+        elif short_weight > 0 and long_weight == 0:
+            chosen, side, total_weight, schools_n = short_signals, "SHORT", short_weight, short_schools
+        elif long_weight > short_weight * 1.1:
+            chosen, side, total_weight, schools_n = long_signals, "LONG", long_weight, long_schools
+        elif short_weight > long_weight * 1.1:
+            chosen, side, total_weight, schools_n = short_signals, "SHORT", short_weight, short_schools
         else:
-            logger.info(f"[Consensus] {symbol} ❌ 方向不明 (long={long_weight:.2f} short={short_weight:.2f}，差距未達 1.3x)")
+            logger.info(f"[Consensus] {symbol} ❌ 方向不明 (long={long_weight:.2f} short={short_weight:.2f}，差距未達 1.1x)")
             return None
 
         # 過濾門檻
