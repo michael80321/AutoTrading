@@ -8,7 +8,7 @@ import asyncio
 import importlib
 import logging
 import os
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from typing import Literal
 import pandas as pd
 
@@ -150,7 +150,8 @@ class PoolCollective:
         self.chat_channel = f"#{'crypto' if pool_name == 'crypto' else 'equities'}-floor"
         # 跨時間窗口訊號緩衝：保留最近 signal_window_hours 小時內的訊號
         self.signal_buffer: list[Signal] = []
-        self.signal_window_hours: int = 6
+        self.signal_window_hours: int = config.consensus.signal_window_hours
+        self.max_entry_drift_pct: float = config.consensus.max_entry_drift_pct
     
     def initialize_bots(self):
         """根據名冊載入 18 席 + 1 個 Meta 裁判"""
@@ -225,16 +226,11 @@ class PoolCollective:
 
     def _compute(self, market_data: dict, context_extras: dict) -> list:
         """純同步：產生訊號、評論、Meta、跨時間窗口共識聚合。"""
-        from datetime import timezone as _tz
-        now_utc = datetime.now(_tz.utc)
-        cutoff = now_utc - __import__('datetime').timedelta(hours=self.signal_window_hours)
+        now_utc = datetime.now(timezone.utc)
+        cutoff = now_utc - timedelta(hours=self.signal_window_hours)
 
-        # 剪除過期緩衝訊號（訊號的 timestamp 是 UTC-aware）
-        self.signal_buffer = [
-            s for s in self.signal_buffer
-            if (s.timestamp.tzinfo is not None and s.timestamp >= cutoff)
-               or (s.timestamp.tzinfo is None)  # naive 保留（向後相容）
-        ]
+        # 剪除過期緩衝訊號（已在 ingest 時統一轉為 UTC-aware）
+        self.signal_buffer = [s for s in self.signal_buffer if s.timestamp >= cutoff]
 
         current_signals: list[Signal] = []
 
@@ -261,9 +257,10 @@ class PoolCollective:
                 )
                 self._broadcast_commentary(bot, top_symbol, market_data[top_symbol])
 
-        # 第二輪：Meta 裁判
+        # 第二輪：Meta 裁判（compute_metrics 每席只算一次，供 score + winrate 共用）
+        metrics_cache = {bid: bot.compute_metrics() for bid, bot in self.bots.items()}
         if self.meta_bot:
-            bot_scores = {bid: bot.compute_metrics().composite_score for bid, bot in self.bots.items()}
+            bot_scores = {bid: m.composite_score for bid, m in metrics_cache.items()}
             for symbol, data in market_data.items():
                 ctx = {
                     **context_extras, "symbol": symbol,
@@ -279,32 +276,69 @@ class PoolCollective:
                     current_signals.append(meta_sig)
                     self._broadcast_to_chat(meta_sig)
 
-        # 把本輪新訊號存入緩衝（去重：同 bot_id + symbol 只保留最新）
+        # 統一把 timestamp 正規化為 UTC-aware，避免 naive 訊號永不過期
         for sig in current_signals:
-            self.signal_buffer = [
-                s for s in self.signal_buffer
-                if not (s.bot_id == sig.bot_id and s.symbol == sig.symbol)
-            ]
-            self.signal_buffer.append(sig)
+            if sig.timestamp.tzinfo is None:
+                sig.timestamp = sig.timestamp.replace(tzinfo=timezone.utc)
+
+        # 本輪新訊號存入緩衝（去重：同 bot_id + symbol 只保留最新）
+        replaced_keys = {(s.bot_id, s.symbol) for s in current_signals}
+        self.signal_buffer = [
+            s for s in self.signal_buffer if (s.bot_id, s.symbol) not in replaced_keys
+        ]
+        self.signal_buffer.extend(current_signals)
 
         logger.info(
             f"[{self.pool_name}] 本輪新訊號: {len(current_signals)}，"
             f"緩衝窗口({self.signal_window_hours}h)內累積: {len(self.signal_buffer)}"
         )
 
-        # 第三輪：共識聚合（使用窗口內所有訊號）
+        # 第三輪：共識聚合（窗口內訊號聚合，但需現價確認）
         approved = []
-        bot_winrates = {bid: bot.compute_metrics().win_rate for bid, bot in self.bots.items()}
+        bot_winrates = {bid: m.win_rate for bid, m in metrics_cache.items()}
         total = self.config.capital.crypto_pool_total if self.pool_name == "crypto" else self.config.capital.stock_pool_total
-        # 已有開倉的 symbol 不重複下單
         open_symbols = {o.symbol for o in self.router.open_orders.values() if o.pool == self.pool_name}
+        # 本輪有即時訊號的方向（symbol, side）— 確保不是純靠過期訊號開單
+        current_confirmed = {(s.symbol, s.side) for s in current_signals}
+
         for symbol in market_data:
             if symbol in open_symbols:
                 continue
             consensus = self.consensus.aggregate(self.signal_buffer, bot_winrates, total, symbol)
-            if consensus and consensus.approved:
-                approved.append((consensus, symbol))
+            if not (consensus and consensus.approved):
+                continue
+            # 安全閘 1：必須有本輪即時訊號同向確認（防止純靠過期訊號 + 反覆開單迴圈）
+            if (symbol, consensus.side) not in current_confirmed:
+                logger.info(f"[{self.pool_name}] {symbol} {consensus.side} 共識通過但本輪無即時確認，跳過")
+                continue
+            # 安全閘 2：用現價重錨進場 + 檢查 SL/TP 是否已被跨過
+            current_price = float(market_data[symbol]["close"].iloc[-1])
+            if not self._validate_and_reanchor(consensus, current_price):
+                continue
+            approved.append((consensus, symbol))
         return approved
+
+    def _validate_and_reanchor(self, consensus, current_price: float) -> bool:
+        """用現價重錨進場價，並拒絕 SL/TP 已被跨過的過期訊號。"""
+        sl = consensus.stop_loss
+        tp1 = consensus.take_profit[0] if consensus.take_profit else None
+        if consensus.side == "LONG":
+            if current_price <= sl:
+                logger.info(f"現價 {current_price} 已跌破 SL {sl}，過期訊號跳過")
+                return False
+            if tp1 is not None and current_price >= tp1:
+                logger.info(f"現價 {current_price} 已達 TP {tp1}，過期訊號跳過")
+                return False
+        else:  # SHORT
+            if current_price >= sl:
+                logger.info(f"現價 {current_price} 已突破 SL {sl}，過期訊號跳過")
+                return False
+            if tp1 is not None and current_price <= tp1:
+                logger.info(f"現價 {current_price} 已達 TP {tp1}，過期訊號跳過")
+                return False
+        # 用現價重錨進場（市價單實際成交在現價，倉位大小須以現價算）
+        consensus.entry = round(current_price, 4)
+        return True
     
     def _broadcast_to_chat(self, signal: Signal):
         msg = {

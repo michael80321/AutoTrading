@@ -91,6 +91,7 @@ async def crypto_signal_debug(orchestrator=Depends(get_orchestrator)):
     pool = orchestrator.crypto
     bot_results = []
     all_signals = []
+    metrics_cache = {bid: bot.compute_metrics() for bid, bot in pool.bots.items()}
 
     for bot_id, bot in pool.bots.items():
         bot_sigs = []
@@ -107,7 +108,7 @@ async def crypto_signal_debug(orchestrator=Depends(get_orchestrator)):
             except Exception as e:
                 bot_sigs.append({"symbol": symbol, "error": str(e)})
 
-        metrics = bot.compute_metrics()
+        metrics = metrics_cache[bot_id]
         bot_results.append({
             "id": bot_id, "name": bot.name, "school": pool.bot_schools.get(bot_id),
             "status": pool.evolution.bot_status.get(bot_id),
@@ -115,8 +116,8 @@ async def crypto_signal_debug(orchestrator=Depends(get_orchestrator)):
             "signals_this_tick": bot_sigs,
         })
 
-    # 跑共識
-    bot_winrates = {bid: bot.compute_metrics().win_rate for bid, bot in pool.bots.items()}
+    # 跑共識（注意：此處用本輪即時訊號，未含 _compute 的 6h 緩衝；僅供診斷參考）
+    bot_winrates = {bid: m.win_rate for bid, m in metrics_cache.items()}
     consensus_results = {}
     for symbol in market_data:
         sym_sigs = [s for s in all_signals if s.symbol == symbol]

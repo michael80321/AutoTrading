@@ -22,6 +22,8 @@ class ConsensusConfig:
     min_backtest_winrate: float = 0.58
     max_risk_per_trade_pct: float = 0.015
     ewma_alpha: float = 0.7
+    signal_window_hours: int = 6      # 跨時間窗口累積訊號的長度
+    max_entry_drift_pct: float = 0.01 # 現價偏離訊號進場價超過此值則重錨定
 
 
 @dataclass
