@@ -64,6 +64,7 @@ async def _seed_backtest_winrates(orch):
                     r = engine.run(bot, df, walk_forward_segments=4)
                     if r.total_trades >= 10:
                         bot.backtest_winrate = r.win_rate
+                        bot.backtest_expectancy = r.expectancy
                         logger.info(
                             f"📊 {bot.name} 回測勝率 {r.win_rate:.2%} "
                             f"({r.total_trades} 筆, 期望值 {r.expectancy:+.4f})"

@@ -19,7 +19,7 @@ class CapitalConfig:
 class ConsensusConfig:
     min_aligned_schools: int = 2      # 2 派同向即可開單（初期收集實戰數據，原為 3）
     min_total_weight: float = 1.0     # 配合 2 派的加權總分門檻（原為 1.5）
-    min_backtest_winrate: float = 0.58
+    min_backtest_winrate: float = 0.58  # 已廢棄：門檻改為正期望值 (backtest_expectancy > 0)
     max_risk_per_trade_pct: float = 0.015
     ewma_alpha: float = 0.7
     signal_window_hours: int = 6      # 跨時間窗口累積訊號的長度

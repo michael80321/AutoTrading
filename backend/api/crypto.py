@@ -117,13 +117,13 @@ async def crypto_signal_debug(orchestrator=Depends(get_orchestrator)):
         })
 
     # 跑共識（注意：此處用本輪即時訊號，未含 _compute 的 6h 緩衝；僅供診斷參考）
-    bot_winrates = {bid: m.win_rate for bid, m in metrics_cache.items()}
+    bot_expectancies = {bid: getattr(bot, "backtest_expectancy", None) for bid, bot in pool.bots.items()}
     consensus_results = {}
     for symbol in market_data:
         sym_sigs = [s for s in all_signals if s.symbol == symbol]
         long_s = [s for s in sym_sigs if s.side == "LONG"]
         short_s = [s for s in sym_sigs if s.side == "SHORT"]
-        consensus = pool.consensus.aggregate(all_signals, bot_winrates, pool.config.capital.crypto_pool_total, symbol)
+        consensus = pool.consensus.aggregate(all_signals, bot_expectancies, pool.config.capital.crypto_pool_total, symbol)
         consensus_results[symbol] = {
             "total_signals": len(sym_sigs),
             "long_signals": len(long_s),

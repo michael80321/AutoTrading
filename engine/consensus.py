@@ -74,7 +74,7 @@ class ConsensusEngine:
     def aggregate(
         self,
         signals: list[Signal],
-        bot_winrates: dict[int, float],
+        bot_expectancies: dict[int, float | None],
         account_equity: float,
         symbol: str,
     ) -> Optional[ConsensusResult]:
@@ -120,11 +120,13 @@ class ConsensusEngine:
         if total_weight < self.min_total_weight:
             logger.info(f"[Consensus] {symbol} ❌ 加權分不足 ({total_weight:.2f} < {self.min_total_weight})")
             return None
-        # 每席回測勝率門檻
-        qualified = [s for s in chosen if bot_winrates.get(s.bot_id, 0) >= self.min_backtest_winrate]
+        # 每席正期望值門檻：backtest_expectancy > 0 才算有效投票席
+        # None 表示回測樣本不足（< 10 筆），視為尚未驗證 → 不計入 qualified
+        qualified = [s for s in chosen if (bot_expectancies.get(s.bot_id) or -1) > 0]
         if len(qualified) < self.min_aligned_schools:
-            failed = [(s.bot_name, bot_winrates.get(s.bot_id, 0)) for s in chosen if bot_winrates.get(s.bot_id, 0) < self.min_backtest_winrate]
-            logger.info(f"[Consensus] {symbol} ❌ 勝率門檻不足 ({len(qualified)}/{len(chosen)} 通過) 失敗: {failed}")
+            failed = [(s.bot_name, bot_expectancies.get(s.bot_id)) for s in chosen
+                      if not ((bot_expectancies.get(s.bot_id) or -1) > 0)]
+            logger.info(f"[Consensus] {symbol} ❌ 正期望值席數不足 ({len(qualified)}/{len(chosen)} 通過) 失敗: {failed}")
             return None
 
         logger.info(f"[Consensus] {symbol} ✅ {side} 通過！學派={schools_n} 加權={total_weight:.2f} 貢獻者={[s.bot_name for s in qualified]}")
@@ -155,5 +157,5 @@ class ConsensusEngine:
             contributors=[s.bot_name for s in qualified],
             schools_aligned=schools_n,
             total_weight=round(total_weight, 3),
-            rationale=f"{schools_n} 派同向、加權分 {total_weight:.2f}、{len(qualified)} 席通過勝率門檻",
+            rationale=f"{schools_n} 派同向、加權分 {total_weight:.2f}、{len(qualified)} 席正期望值驗證",
         )

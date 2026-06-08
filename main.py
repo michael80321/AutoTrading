@@ -301,7 +301,11 @@ class PoolCollective:
 
         # 第三輪：共識聚合（窗口內訊號聚合）
         approved = []
-        bot_winrates = {bid: m.win_rate for bid, m in metrics_cache.items()}
+        # 優先用回測期望值（>0 = 有正期望值）；實盤紀錄太少的席位用 bot.backtest_expectancy
+        bot_expectancies: dict = {}
+        for bid, bot in self.bots.items():
+            exp = getattr(bot, "backtest_expectancy", None)
+            bot_expectancies[bid] = exp
         total = self.config.capital.crypto_pool_total if self.pool_name == "crypto" else self.config.capital.stock_pool_total
         # 用快照判斷已開倉位，避免直接讀取 event loop 可能同時修改的 open_orders
         open_symbols = {o.symbol for o in open_orders_snapshot.values() if o.pool == self.pool_name}
@@ -311,7 +315,7 @@ class PoolCollective:
         for symbol in market_data:
             if symbol in open_symbols:
                 continue
-            consensus = self.consensus.aggregate(signal_buffer, bot_winrates, total, symbol)
+            consensus = self.consensus.aggregate(signal_buffer, bot_expectancies, total, symbol)
             if not (consensus and consensus.approved):
                 continue
             # 安全閘 1：貢獻者中至少 1 個訊號是近 2h 內的（防止全部訊號都超過 2h）

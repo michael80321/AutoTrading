@@ -70,8 +70,9 @@ class BaseStrategy(ABC):
         self.params: dict = self._get_params()
         self.trade_log: list[dict] = []
         self.equity_curve: list[float] = [initial_capital]
-        # 啟動時跑回測得出的真實勝率，作為實盤交易紀錄不足時的勝率依據
+        # 啟動時跑回測得出的真實勝率與期望值，作為實盤交易紀錄不足時的依據
         self.backtest_winrate: Optional[float] = None
+        self.backtest_expectancy: Optional[float] = None  # 每筆期望值 > 0 才允許參與共識
     
     @abstractmethod
     def _get_params(self) -> dict:
