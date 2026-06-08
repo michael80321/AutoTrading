@@ -18,6 +18,36 @@ TIMEFRAME = "1h"  # Binance klines interval 格式
 
 BINANCE_KLINE_URL = "https://api.binance.com/api/v3/klines"
 BINANCE_FUNDING_URL = "https://fapi.binance.com/fapi/v1/fundingRate"
+FEAR_GREED_URL = "https://api.alternative.me/fng/"
+
+# 恐懼貪婪指數每天才更新一次，快取避免每 tick 重抓
+_fng_cache: dict = {"value": None, "fetched_at": None}
+_FNG_TTL_SECONDS = 1800  # 30 分鐘
+
+
+async def fetch_fear_greed(client: httpx.AsyncClient) -> float | None:
+    """抓 alternative.me 恐懼貪婪指數 (0-100)，映射為 -1~+1 的情緒分數。帶 30 分鐘快取。"""
+    now = datetime.now(timezone.utc)
+    cached_at = _fng_cache["fetched_at"]
+    if cached_at is not None and (now - cached_at).total_seconds() < _FNG_TTL_SECONDS:
+        return _fng_cache["value"]
+    try:
+        resp = await client.get(FEAR_GREED_URL, params={"limit": 1}, timeout=10.0)
+        if resp.status_code != 200:
+            logger.warning(f"Fear&Greed HTTP {resp.status_code}")
+            return _fng_cache["value"]
+        data = resp.json().get("data", [])
+        if not data:
+            return _fng_cache["value"]
+        value = int(data[0]["value"])  # 0=極度恐懼, 100=極度貪婪
+        sentiment = (value - 50) / 50.0  # -1 ~ +1
+        _fng_cache["value"] = sentiment
+        _fng_cache["fetched_at"] = now
+        logger.info(f"恐懼貪婪指數 {value} → 情緒分數 {sentiment:.2f}")
+        return sentiment
+    except Exception as e:
+        logger.error(f"fetch_fear_greed 失敗: {e}")
+        return _fng_cache["value"]
 
 
 async def fetch_funding_rate(client: httpx.AsyncClient, symbol: str, limit: int = 100) -> pd.Series | None:
@@ -57,10 +87,15 @@ async def fetch_ohlcv(client: httpx.AsyncClient, symbol: str, interval: str = "1
             "close_time", "quote_volume", "trades", "taker_buy_base",
             "taker_buy_quote", "ignore",
         ])
-        for col in ["open", "high", "low", "close", "volume"]:
+        for col in ["open", "high", "low", "close", "volume", "taker_buy_base"]:
             df[col] = df[col].astype(float)
         df["open_time"] = pd.to_datetime(df["open_time"], unit="ms", utc=True)
         df.set_index("open_time", inplace=True)
+
+        # 訂單流欄位：taker 主動買量 = buy_volume，其餘為 sell_volume
+        # （Binance kline 的 taker_buy_base 即吃單方主動買進的成交量）
+        df["buy_volume"] = df["taker_buy_base"]
+        df["sell_volume"] = df["volume"] - df["taker_buy_base"]
 
         # 合併資金費率：8H 一筆，前向填補到每根 1H K 棒
         funding = await fetch_funding_rate(client, symbol)
@@ -86,10 +121,13 @@ async def market_tick_loop(orchestrator, interval_seconds: int = 60):
                         market_data[symbol] = df
 
                 if market_data:
+                    sentiment = await fetch_fear_greed(client)
                     context = {
                         "timestamp": datetime.now(timezone.utc).isoformat(),
                         "timeframe": TIMEFRAME,
                     }
+                    if sentiment is not None:
+                        context["sentiment_score"] = sentiment
                     await orchestrator.crypto.tick(market_data, context)
                     # 順手更新即時 Binance 餘額（有設 key 才會動作）
                     try:

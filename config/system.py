@@ -46,16 +46,15 @@ CRYPTO_ROSTER = [
     {"id": "C03", "name": "Helix SMC-Gamma",    "school": "SMC",      "class": "SMCGamma",          "module": "strategies.crypto.smc"},
     {"id": "C04", "name": "Tempest OF-Live",    "school": "訂單流",    "class": "TempestOrderFlow",  "module": "strategies.crypto.auction_orderflow"},
     {"id": "C05", "name": "Riptide OF-Quant",   "school": "訂單流",    "class": "RiptideCVD",        "module": "strategies.crypto.auction_orderflow"},
-    {"id": "C06", "name": "Glassmind OnChain",  "school": "鏈上",      "class": "GlassmindOnChain",  "module": "strategies.crypto.onchain_arb"},
-    {"id": "C07", "name": "Mempool MEV",        "school": "鏈上",      "class": "MempoolMEV",        "module": "strategies.crypto.onchain_arb"},
+    # C06 Glassmind 鏈上、C07 Mempool MEV：需鏈上/mempool 數據，Binance 1H OHLCV 無法提供 → 退役
     {"id": "C08", "name": "Arbiter Funding",    "school": "套利",      "class": "ArbiterFunding",    "module": "strategies.crypto.onchain_arb"},
-    {"id": "C09", "name": "Triad Cross-Ex",     "school": "套利",      "class": "TriadCrossEx",      "module": "strategies.crypto.onchain_arb"},
+    # C09 Triad 三角套利：需秒級跨所報價，60 秒 tick 架構不匹配 → 退役
     {"id": "C10", "name": "Volterra Auction",   "school": "拍賣理論",  "class": "VolterraAuction",   "module": "strategies.crypto.auction_orderflow"},
     {"id": "C11", "name": "Ichimoku Sage",      "school": "傳統TA",    "class": "IchimokuSage",      "module": "strategies.cross.ta_quant_macro_sentiment_meta"},
     {"id": "C12", "name": "Fibonacci Tide",     "school": "傳統TA",    "class": "FibonacciTide",     "module": "strategies.cross.ta_quant_macro_sentiment_meta"},
     {"id": "C13", "name": "Bayes Mean-Rev",     "school": "量化統計",  "class": "BayesMeanRev",      "module": "strategies.cross.ta_quant_macro_sentiment_meta"},
     {"id": "C14", "name": "Markov Regime",      "school": "量化統計",  "class": "MarkovRegime",      "module": "strategies.cross.ta_quant_macro_sentiment_meta"},
-    {"id": "C15", "name": "Macro Hawk",         "school": "宏觀",      "class": "MacroHawk",         "module": "strategies.cross.ta_quant_macro_sentiment_meta"},
+    # C15 Macro Hawk：宏觀 DXY/VIX 日線邏輯餵 1H crypto 數據不對位 → 退役
     {"id": "C16", "name": "Pulse Sentiment",    "school": "情緒",      "class": "PulseSentiment",    "module": "strategies.cross.ta_quant_macro_sentiment_meta"},
     {"id": "C17", "name": "Athena Profile",     "school": "拍賣理論",  "class": "AthenaProfile",     "module": "strategies.crypto.auction_orderflow"},
     {"id": "C18", "name": "Meta Ensemble (加密)", "school": "AI 元學派", "class": "MetaEnsemble",      "module": "strategies.cross.ta_quant_macro_sentiment_meta"},

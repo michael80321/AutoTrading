@@ -70,6 +70,8 @@ class BaseStrategy(ABC):
         self.params: dict = self._get_params()
         self.trade_log: list[dict] = []
         self.equity_curve: list[float] = [initial_capital]
+        # 啟動時跑回測得出的真實勝率，作為實盤交易紀錄不足時的勝率依據
+        self.backtest_winrate: Optional[float] = None
     
     @abstractmethod
     def _get_params(self) -> dict:
@@ -104,26 +106,28 @@ class BaseStrategy(ABC):
     def compute_metrics(self, period_days: int = 30) -> BotMetrics:
         """計算當前績效"""
         if len(self.trade_log) < 5:
-            # 無足夠歷史時給予中性預設值，讓新機器人可以參與共識
-            return BotMetrics(self.bot_id, 0.6, 0, 0, 0, 0, 0.3, len(self.trade_log), period_days)
-        
+            # 實盤紀錄不足時，優先用啟動回測勝率；無回測結果則給保守 0.5（不給虛假優勢）
+            seed_wr = self.backtest_winrate if self.backtest_winrate is not None else 0.5
+            return BotMetrics(self.bot_id, round(seed_wr, 4), 0, 0, 0, 0, 0.3, len(self.trade_log), period_days)
+
         df = pd.DataFrame(self.trade_log)
         wins = df[df["pnl"] > 0]
         win_rate = len(wins) / len(df)
-        
+
         returns = pd.Series(self.equity_curve).pct_change().dropna()
-        sharpe = np.sqrt(252) * returns.mean() / (returns.std() + 1e-9)
-        
+        # 年化因子依實際交易頻率推算（每年約多少筆交易），而非假設每筆間隔一個交易日
+        ann_factor = np.sqrt(self._annualization_trades_per_year())
+        sharpe = ann_factor * returns.mean() / (returns.std() + 1e-9)
+
         eq = pd.Series(self.equity_curve)
         running_max = eq.cummax()
         drawdown = (eq - running_max) / running_max
         max_dd = abs(drawdown.min())
-        
+
         pnl_pct = (eq.iloc[-1] - eq.iloc[0]) / eq.iloc[0]
-        
-        # 月度穩定性 = 1 / (月報酬標準差 + 1e-3)
-        monthly_returns = returns.resample("ME").sum() if isinstance(returns.index, pd.DatetimeIndex) else returns
-        stability = 1.0 / (monthly_returns.std() + 1e-3)
+
+        # 穩定性 = 1 / (每筆報酬標準差 + 1e-3)；equity_curve 無時間索引，故用逐筆報酬離散度
+        stability = 1.0 / (returns.std() + 1e-3)
         
         # 綜合分數
         norm_sharpe = np.clip(sharpe / 3.0, 0, 1)
@@ -145,7 +149,15 @@ class BaseStrategy(ABC):
             total_trades=len(df),
             period_days=period_days,
         )
-    
+
+    def _annualization_trades_per_year(self) -> float:
+        """Sharpe 年化因子用的「每年交易筆數」估計。
+
+        實盤 equity_curve 無時間索引，採保守假設：低頻訊號策略約每 3 天成交一次
+        → 約 120 筆/年。回測引擎 (walkforward) 另有依實際時間跨度計算的精確版本。
+        """
+        return 120.0
+
     def _apply_mutation(self, mutation_rate: float = 0.1) -> dict:
         """繁衍時對參數施加 ±10% 隨機變異"""
         new_params = {}

@@ -64,38 +64,41 @@ class BacktestEngine:
         walk_forward_segments: int = 6,
     ) -> BacktestResult:
         """
-        執行 walk-forward 回測
-        data 必須涵蓋至少 18 個月,且 index 為 datetime
+        滾動樣本外回測（rolling out-of-sample）。
+        每段切前 67% 作為 indicator warmup（in-sample），只在後 33% 樣本外段開倉。
+        注意：本引擎不對策略參數做最佳化，僅在不同時段分別跑樣本外測試。
+        data 須 index 為 datetime。
         """
         if len(data) < 200:
             raise ValueError(f"資料不足,需 ≥ 200 根 K 棒,目前 {len(data)}")
-        
+
         # 切分時段
         segment_len = len(data) // walk_forward_segments
         all_trades = []
         equity = self.initial_capital
         equity_curve = [equity]
         oos_returns_per_segment = []
-        
+
         for seg_idx in range(walk_forward_segments):
             start = seg_idx * segment_len
             end = (seg_idx + 1) * segment_len
-            in_sample = data.iloc[start:start + int(segment_len * 0.67)]
-            out_sample = data.iloc[start + int(segment_len * 0.67):end]
-            
+            split = start + int(segment_len * 0.67)  # in-sample / out-of-sample 分界
+            out_sample = data.iloc[split:end]
+
             if len(out_sample) < 50:
                 continue
-            
-            # OOS 模擬交易
+
+            # OOS 模擬交易（window 涵蓋完整歷史到當前 bar，前段 in-sample 充當 indicator warmup）
             seg_start_equity = equity
             position = None
-            
-            for i in range(50, len(out_sample) - 1):
-                window = out_sample.iloc[max(0, i-200):i+1]
-                
+
+            for j in range(len(out_sample) - 1):
+                abs_idx = split + j  # 對應完整 data 的絕對索引
+                window = data.iloc[max(0, abs_idx - 200):abs_idx + 1]
+
                 # 平倉檢查
                 if position is not None:
-                    nxt = out_sample.iloc[i+1]
+                    nxt = out_sample.iloc[j + 1]
                     closed_pnl = self._check_exit(position, nxt)
                     if closed_pnl is not None:
                         equity += closed_pnl
@@ -141,7 +144,13 @@ class BacktestEngine:
         
         eq_series = pd.Series(equity_curve)
         returns = eq_series.pct_change().dropna()
-        sharpe = np.sqrt(252) * returns.mean() / (returns.std() + 1e-9)
+        # 年化因子依回測實際時間跨度推算每年交易筆數，而非假設每筆間隔一個交易日
+        if isinstance(data.index, pd.DatetimeIndex) and len(data.index) > 1:
+            span_years = (data.index[-1] - data.index[0]).days / 365.25
+            trades_per_year = len(df) / span_years if span_years > 0 else 252.0
+        else:
+            trades_per_year = 252.0
+        sharpe = np.sqrt(max(trades_per_year, 1.0)) * returns.mean() / (returns.std() + 1e-9)
         
         running_max = eq_series.cummax()
         dd = (eq_series - running_max) / running_max

@@ -371,37 +371,22 @@ class PulseSentiment(BaseStrategy):
     
     def _get_params(self) -> dict:
         return {
-            "sentiment_extreme": 0.7,
-            "volume_confirmation_zscore": 1.5,
-            "contrarian_threshold": 0.85,  # 過度情緒反向操作
+            # 恐懼貪婪指數驅動的反向策略：
+            # contrarian_threshold=0.6 對應 fng>80（極度貪婪）做空、fng<20（極度恐懼）做多
+            "contrarian_threshold": 0.6,
             "rr_ratio": 2.0,
         }
-    
+
     def _generate_signal(self, data: pd.DataFrame, context: dict) -> Optional[Signal]:
         p = self.params
-        sentiment = context.get("sentiment_score")  # -1 ~ +1
-        social_volume_z = context.get("social_volume_zscore", 0)
+        sentiment = context.get("sentiment_score")  # -1 ~ +1（來自恐懼貪婪指數）
         if sentiment is None or len(data) < 50:
             return None
-        
+
         price = data["close"].iloc[-1]
         atr = (data["high"] - data["low"]).rolling(14).mean().iloc[-1]
-        
-        # 順勢:中等正情緒 + 成交量確認
-        if p["sentiment_extreme"] < sentiment < p["contrarian_threshold"] and social_volume_z > p["volume_confirmation_zscore"]:
-            entry = price
-            sl = price - atr * 2
-            tp_dist = (entry - sl) * p["rr_ratio"]
-            return Signal(
-                bot_id=self.bot_id, bot_name=self.name, school=self.SCHOOL,
-                symbol=context.get("symbol", "BTCUSDT"),
-                side="LONG", entry_price=entry, stop_loss=sl,
-                take_profit=[entry + tp_dist],
-                confidence=0.55, timeframe=self.DEFAULT_TIMEFRAME,
-                timestamp=datetime.now(timezone.utc),
-                rationale=f"情緒指數 {sentiment:.2f} 偏多 + 社群放量",
-            )
-        # 反向:極端情緒 (>0.85 或 <-0.85) — 通常為頂/底
+
+        # 反向:極度貪婪做空、極度恐懼做多（恐懼貪婪指數的標準逆勢用法）
         if sentiment > p["contrarian_threshold"]:
             entry = price
             sl = price + atr * 1.5

@@ -40,6 +40,45 @@ async def lifespan(app: FastAPI):
         task.cancel()
 
 
+async def _seed_backtest_winrates(orch):
+    """啟動時對每個加密 bot 跑滾動樣本外回測，把真實回測勝率寫入 bot.backtest_winrate。
+
+    在 tick loop 開始下單前完成；未 seed 前 compute_metrics 回保守 0.5（< 門檻），不會交易。
+    """
+    import httpx
+    from .market_feed import fetch_ohlcv
+    from ..backtest.walkforward import BacktestEngine
+
+    try:
+        async with httpx.AsyncClient() as client:
+            df = await fetch_ohlcv(client, "BTCUSDT", "1h", 1000)
+        if df is None or len(df) < 200:
+            logger.warning("回測 seed：無法取得足夠歷史數據，跳過")
+            return
+
+        engine = BacktestEngine()
+
+        def _run():
+            for bot_id, bot in orch.crypto.bots.items():
+                try:
+                    r = engine.run(bot, df, walk_forward_segments=4)
+                    if r.total_trades >= 10:
+                        bot.backtest_winrate = r.win_rate
+                        logger.info(
+                            f"📊 {bot.name} 回測勝率 {r.win_rate:.2%} "
+                            f"({r.total_trades} 筆, 期望值 {r.expectancy:+.4f})"
+                        )
+                    else:
+                        logger.info(f"📊 {bot.name} 回測樣本不足 ({r.total_trades} 筆)，保持保守勝率")
+                except Exception as e:
+                    logger.warning(f"📊 {bot.name} 回測失敗: {e}")
+
+        await asyncio.to_thread(_run)
+        logger.info("✅ 回測勝率 seed 完成")
+    except Exception as e:
+        logger.error(f"回測 seed 失敗: {e}", exc_info=True)
+
+
 async def _background_boot(app: FastAPI):
     try:
         from .api.deps import get_orchestrator
@@ -48,6 +87,8 @@ async def _background_boot(app: FastAPI):
             await asyncio.wait_for(orch.connect_brokers(), timeout=20.0)
         except Exception as e:
             logger.warning(f"broker 連線略過: {e}")
+        # 先用真實回測勝率 seed，再啟動會下單的 tick loop
+        await _seed_backtest_winrates(orch)
         for coro in [
             orch._tp1_polling_loop(),
             market_tick_loop(orch, interval_seconds=60),
