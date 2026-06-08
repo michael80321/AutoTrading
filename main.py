@@ -293,13 +293,13 @@ class PoolCollective:
             f"緩衝窗口({self.signal_window_hours}h)內累積: {len(self.signal_buffer)}"
         )
 
-        # 第三輪：共識聚合（窗口內訊號聚合，但需現價確認）
+        # 第三輪：共識聚合（窗口內訊號聚合）
         approved = []
         bot_winrates = {bid: m.win_rate for bid, m in metrics_cache.items()}
         total = self.config.capital.crypto_pool_total if self.pool_name == "crypto" else self.config.capital.stock_pool_total
         open_symbols = {o.symbol for o in self.router.open_orders.values() if o.pool == self.pool_name}
-        # 本輪有即時訊號的方向（symbol, side）— 確保不是純靠過期訊號開單
-        current_confirmed = {(s.symbol, s.side) for s in current_signals}
+        # 「新鮮訊號」閾值：緩衝窗口內至少要有 1 個來自近 2h 的訊號才允許開單
+        freshness_cutoff = now_utc - timedelta(hours=2)
 
         for symbol in market_data:
             if symbol in open_symbols:
@@ -307,9 +307,16 @@ class PoolCollective:
             consensus = self.consensus.aggregate(self.signal_buffer, bot_winrates, total, symbol)
             if not (consensus and consensus.approved):
                 continue
-            # 安全閘 1：必須有本輪即時訊號同向確認（防止純靠過期訊號 + 反覆開單迴圈）
-            if (symbol, consensus.side) not in current_confirmed:
-                logger.info(f"[{self.pool_name}] {symbol} {consensus.side} 共識通過但本輪無即時確認，跳過")
+            # 安全閘 1：貢獻者中至少 1 個訊號是近 2h 內的（防止全部訊號都超過 2h）
+            contributing_names = set(consensus.contributors)
+            fresh = any(
+                s.symbol == symbol and s.side == consensus.side
+                and s.bot_name in contributing_names
+                and s.timestamp >= freshness_cutoff
+                for s in self.signal_buffer
+            )
+            if not fresh:
+                logger.info(f"[{self.pool_name}] {symbol} {consensus.side} 共識通過但無近 2h 新鮮訊號，跳過")
                 continue
             # 安全閘 2：用現價重錨進場 + 檢查 SL/TP 是否已被跨過
             current_price = float(market_data[symbol]["close"].iloc[-1])
