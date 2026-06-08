@@ -211,7 +211,12 @@ class PoolCollective:
             context_extras["cross_pool_warnings"] = cross_warnings
 
         # 18 席訊號 + 評論 + 共識聚合（純同步、可能很重）→ 丟到 worker thread
-        approved = await asyncio.to_thread(self._compute, market_data, context_extras)
+        # 先在 event loop 取 open_orders 快照，避免 worker thread 直接讀取可能被 TP polling loop 同時修改的 dict
+        open_orders_snapshot = dict(self.router.open_orders)
+        approved, new_buffer = await asyncio.to_thread(
+            self._compute, market_data, context_extras, open_orders_snapshot
+        )
+        self.signal_buffer = new_buffer  # 在 event loop 更新，避免 worker 直接寫 shared state
 
         # 下單（async I/O，留在主 event loop）
         for consensus, symbol in approved:
@@ -224,13 +229,16 @@ class PoolCollective:
             await self._run_evolution_cycle()
             self.last_evolution_cycle = datetime.now()
 
-    def _compute(self, market_data: dict, context_extras: dict) -> list:
-        """純同步：產生訊號、評論、Meta、跨時間窗口共識聚合。"""
+    def _compute(self, market_data: dict, context_extras: dict, open_orders_snapshot: dict) -> tuple[list, list]:
+        """純同步：產生訊號、評論、Meta、跨時間窗口共識聚合。
+
+        回傳 (approved_list, new_signal_buffer) — 不直接寫 shared state，由 tick() 套用。
+        """
         now_utc = datetime.now(timezone.utc)
         cutoff = now_utc - timedelta(hours=self.signal_window_hours)
 
-        # 剪除過期緩衝訊號（已在 ingest 時統一轉為 UTC-aware）
-        self.signal_buffer = [s for s in self.signal_buffer if s.timestamp >= cutoff]
+        # 剪除過期緩衝訊號（已在 ingest 時統一轉為 UTC-aware）；操作本地副本
+        signal_buffer = [s for s in self.signal_buffer if s.timestamp >= cutoff]
 
         current_signals: list[Signal] = []
 
@@ -283,28 +291,27 @@ class PoolCollective:
 
         # 本輪新訊號存入緩衝（去重：同 bot_id + symbol 只保留最新）
         replaced_keys = {(s.bot_id, s.symbol) for s in current_signals}
-        self.signal_buffer = [
-            s for s in self.signal_buffer if (s.bot_id, s.symbol) not in replaced_keys
-        ]
-        self.signal_buffer.extend(current_signals)
+        signal_buffer = [s for s in signal_buffer if (s.bot_id, s.symbol) not in replaced_keys]
+        signal_buffer.extend(current_signals)
 
         logger.info(
             f"[{self.pool_name}] 本輪新訊號: {len(current_signals)}，"
-            f"緩衝窗口({self.signal_window_hours}h)內累積: {len(self.signal_buffer)}"
+            f"緩衝窗口({self.signal_window_hours}h)內累積: {len(signal_buffer)}"
         )
 
         # 第三輪：共識聚合（窗口內訊號聚合）
         approved = []
         bot_winrates = {bid: m.win_rate for bid, m in metrics_cache.items()}
         total = self.config.capital.crypto_pool_total if self.pool_name == "crypto" else self.config.capital.stock_pool_total
-        open_symbols = {o.symbol for o in self.router.open_orders.values() if o.pool == self.pool_name}
+        # 用快照判斷已開倉位，避免直接讀取 event loop 可能同時修改的 open_orders
+        open_symbols = {o.symbol for o in open_orders_snapshot.values() if o.pool == self.pool_name}
         # 「新鮮訊號」閾值：緩衝窗口內至少要有 1 個來自近 2h 的訊號才允許開單
         freshness_cutoff = now_utc - timedelta(hours=2)
 
         for symbol in market_data:
             if symbol in open_symbols:
                 continue
-            consensus = self.consensus.aggregate(self.signal_buffer, bot_winrates, total, symbol)
+            consensus = self.consensus.aggregate(signal_buffer, bot_winrates, total, symbol)
             if not (consensus and consensus.approved):
                 continue
             # 安全閘 1：貢獻者中至少 1 個訊號是近 2h 內的（防止全部訊號都超過 2h）
@@ -313,20 +320,28 @@ class PoolCollective:
                 s.symbol == symbol and s.side == consensus.side
                 and s.bot_name in contributing_names
                 and s.timestamp >= freshness_cutoff
-                for s in self.signal_buffer
+                for s in signal_buffer
             )
             if not fresh:
                 logger.info(f"[{self.pool_name}] {symbol} {consensus.side} 共識通過但無近 2h 新鮮訊號，跳過")
                 continue
-            # 安全閘 2：用現價重錨進場 + 檢查 SL/TP 是否已被跨過
+            # 安全閘 2：現價偏離原始進場 > max_entry_drift_pct 則放棄；偏離在允許範圍內則重錨
             current_price = float(market_data[symbol]["close"].iloc[-1])
             if not self._validate_and_reanchor(consensus, current_price):
                 continue
             approved.append((consensus, symbol))
-        return approved
+        return approved, signal_buffer
 
     def _validate_and_reanchor(self, consensus, current_price: float) -> bool:
-        """用現價重錨進場價，並拒絕 SL/TP 已被跨過的過期訊號。"""
+        """用現價重錨進場價，並拒絕：SL/TP 已被跨過的過期訊號、或現價偏離原始進場 > max_entry_drift_pct。"""
+        original_entry = consensus.entry
+        drift = abs(current_price - original_entry) / original_entry if original_entry else 1.0
+        if drift > self.max_entry_drift_pct:
+            logger.info(
+                f"現價 {current_price} 偏離原始進場 {original_entry} 達 {drift*100:.2f}%"
+                f" > {self.max_entry_drift_pct*100:.1f}%，跳過"
+            )
+            return False
         sl = consensus.stop_loss
         tp1 = consensus.take_profit[0] if consensus.take_profit else None
         if consensus.side == "LONG":
@@ -612,6 +627,12 @@ class DualPoolOrchestrator:
             logger.critical(f"🚨 帳戶級熔斷觸發!總回撤 {total_dd*100:.1f}%,所有新部位暫停")
             self.crypto.router.halted = True
             self.stock.router.halted = True
+        else:
+            # 回撤恢復後自動解除熔斷（手動 /halt 除外，那會把 open_orders 清空）
+            if self.crypto.router.halted or self.stock.router.halted:
+                logger.info(f"回撤恢復至 {total_dd*100:.1f}%，自動解除熔斷")
+            self.crypto.router.halted = False
+            self.stock.router.halted = False
     
     def get_full_snapshot(self) -> dict:
         """完整雙池快照給前端"""

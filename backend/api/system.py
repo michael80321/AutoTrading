@@ -52,9 +52,19 @@ async def cross_pool_warnings(orchestrator=Depends(get_orchestrator)):
 
 @router.post("/halt", dependencies=[Depends(verify_admin)])
 async def emergency_halt(orchestrator=Depends(get_orchestrator)):
+    orchestrator.crypto.router.halted = True
+    orchestrator.stock.router.halted = True
     orchestrator.crypto.router.open_orders.clear()
     orchestrator.stock.router.open_orders.clear()
-    return {"halted": True, "message": "所有新部位已暫停"}
+    return {"halted": True, "message": "所有新部位已暫停，熔斷已啟用"}
+
+
+@router.post("/resume", dependencies=[Depends(verify_admin)])
+async def emergency_resume(orchestrator=Depends(get_orchestrator)):
+    """手動解除熔斷（需確認回撤已恢復）"""
+    orchestrator.crypto.router.halted = False
+    orchestrator.stock.router.halted = False
+    return {"halted": False, "message": "熔斷已解除，恢復接受新部位"}
 
 
 @router.get("/funding")

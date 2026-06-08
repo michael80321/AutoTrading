@@ -141,6 +141,7 @@ class ExecutionRouter:
         """提交至 Binance 合約 — 市價進場 + STOP_MARKET 止損 + TAKE_PROFIT_MARKET 止盈"""
         if self.binance is None:
             logger.info(f"[DRY-RUN] 合約 {order.symbol} {order.side} qty={order.qty:.4f}")
+            order.fees_paid = order.qty * order.entry_price * self.fee_rate_crypto
             return True
         try:
             side = "buy" if order.side == "LONG" else "sell"
