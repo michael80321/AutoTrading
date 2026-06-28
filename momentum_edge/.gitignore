@@ -1,0 +1,7 @@
+# 產出物與快取不入版控（避免把舊/合成資料當成真相）
+output/*
+!output/.gitkeep
+data_cache/*
+!data_cache/.gitkeep
+__pycache__/
+*.pyc
