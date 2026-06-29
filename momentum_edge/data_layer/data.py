@@ -45,6 +45,50 @@ def load_cache(symbol: str, timeframe: str) -> Optional[pd.DataFrame]:
     return df
 
 
+# CoinMetrics 社群版日線參考價（real data，連 Binance 被地理封鎖的環境也能抓）。
+# 注意：只提供每日參考價 PriceUSD（close-only），無 OHLC。
+_COINMETRICS_RAW = "https://raw.githubusercontent.com/coinmetrics/data/master/csv/{asset}.csv"
+_SYMBOL_TO_CM_ASSET = {"BTC/USDT": "btc", "ETH/USDT": "eth"}
+
+
+def fetch_coinmetrics(
+    symbol: str = "BTC/USDT",
+    start: str | None = None,
+    end: str | None = None,
+) -> pd.DataFrame:
+    """從 CoinMetrics 社群資料抓每日參考價 PriceUSD。
+
+    回傳 open=high=low=close=PriceUSD 的 DataFrame（close-only 來源）。
+    因為沒有真實 OHLC，回測必須用 next_close 成交（用 prev_close 當 open 會變成偷看未來）。
+    """
+    import io
+    import urllib.request
+
+    asset = _SYMBOL_TO_CM_ASSET.get(symbol)
+    if asset is None:
+        raise ValueError(f"CoinMetrics 來源不支援 {symbol}（僅 {list(_SYMBOL_TO_CM_ASSET)}）")
+
+    url = _COINMETRICS_RAW.format(asset=asset)
+    req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+    raw = urllib.request.urlopen(req, timeout=60).read()
+    full = pd.read_csv(io.BytesIO(raw), usecols=["time", "PriceUSD"])
+    full = full.dropna(subset=["PriceUSD"])
+    ts = pd.to_datetime(full["time"], utc=True)
+    price = full["PriceUSD"].astype(float).to_numpy()
+    df = pd.DataFrame(
+        {"open": price, "high": price, "low": price, "close": price,
+         "volume": 0.0},  # CoinMetrics 此欄無量，標 0 並在回測中不依賴量
+        index=pd.DatetimeIndex(ts, name="ts"),
+    ).sort_index()
+    if start:
+        df = df[df.index >= pd.to_datetime(start, utc=True)]
+    if end:
+        df = df[df.index <= pd.to_datetime(end, utc=True)]
+    logger.info(f"CoinMetrics：抓到 {len(df)} 天 {asset.upper()} PriceUSD "
+                f"({df.index[0].date()}~{df.index[-1].date()})。注意為 close-only 來源。")
+    return df
+
+
 def fetch(
     symbol: str = "BTC/USDT",
     timeframe: str = "1d",
@@ -54,8 +98,8 @@ def fetch(
 ) -> pd.DataFrame:
     """抓歷史 K 線，回傳 index 為 UTC timestamp 的 DataFrame（open/high/low/close/volume）。
 
-    優先 ccxt 分頁抓取；失敗時若有快取則用快取，否則拋出明確錯誤。
-    抓到的資料會寫入快取，之後離線也能跑回測。
+    抓取順序：ccxt（真實 OHLCV）→ CoinMetrics（close-only 參考價）→ 快取。
+    全部失敗才拋出明確錯誤。抓到的資料會寫入快取，之後離線也能跑回測。
     """
     last_err: Exception | None = None
     try:
@@ -86,8 +130,20 @@ def fetch(
         raise RuntimeError("ccxt 回傳空資料")
     except Exception as e:  # noqa: BLE001 — 任何抓取失敗都退回快取
         last_err = e
-        logger.warning(f"ccxt 抓取失敗（{type(e).__name__}: {e}），嘗試快取…")
+        logger.warning(f"ccxt 抓取失敗（{type(e).__name__}: {e}），改試 CoinMetrics…")
 
+    # 退路 1：CoinMetrics 社群日線（close-only，但是真實資料）
+    if timeframe == "1d":
+        try:
+            df = fetch_coinmetrics(symbol, start, end)
+            if len(df) > 0:
+                save_cache(df, symbol, timeframe)
+                return df
+        except Exception as e:  # noqa: BLE001
+            last_err = e
+            logger.warning(f"CoinMetrics 抓取失敗（{type(e).__name__}: {e}），嘗試快取…")
+
+    # 退路 2：本地快取
     if use_cache:
         cached = load_cache(symbol, timeframe)
         if cached is not None and len(cached) > 0:

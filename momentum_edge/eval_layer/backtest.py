@@ -34,14 +34,29 @@ def _validate_costs(fee: float, slip: float) -> None:
         )
 
 
+def _fill_prices(df: pd.DataFrame, execute_on: str) -> np.ndarray:
+    """成交基準價序列。
+
+    next_open : 用第 i 天開盤成交（需真實 OHLC）。
+    next_close: 用第 i 天收盤成交（close-only 來源唯一誠實選項；
+                絕不用 prev_close 當 open，那等於偷看訊號當日收盤）。
+    """
+    if execute_on == "next_open":
+        return df["open"].to_numpy(dtype=float)
+    if execute_on == "next_close":
+        return df["close"].to_numpy(dtype=float)
+    raise ValueError(f"execute_on 須為 next_open 或 next_close，收到 {execute_on!r}")
+
+
 def backtest(
     df: pd.DataFrame,
     signal: pd.Series,
     fee: float = config.FEE_ONE_WAY,
     slip: float = config.SLIPPAGE,
     initial: float = config.INITIAL_CAPITAL,
+    execute_on: str = config.EXECUTE_ON,
 ) -> dict:
-    """逐日模擬。signal[t] 在 t+1 開盤成交。
+    """逐日模擬。signal[t] 於 t+1 成交（execute_on 決定用開盤或收盤價）。
 
     回傳 dict：
       equity      權益曲線 (pd.Series)
@@ -55,7 +70,7 @@ def backtest(
         raise ValueError("backtest(): 資料至少需 2 根 K 棒")
 
     idx = df.index
-    opens = df["open"].to_numpy(dtype=float)
+    fills = _fill_prices(df, execute_on)  # 成交價（next_open→開盤、next_close→收盤）
     closes = df["close"].to_numpy(dtype=float)
     sig = signal.reindex(idx).fillna(0).to_numpy(dtype=int)  # t 收盤決定的目標部位
     n = len(df)
@@ -73,7 +88,7 @@ def backtest(
         # 目標部位來自『昨日收盤』訊號，於『今日開盤』成交（t+1 成交，防 look-ahead）
         target = int(sig[i - 1]) if i >= 1 else 0
         if target != pos:
-            price = opens[i]
+            price = fills[i]
             if target == 1:  # 買進
                 buy_price = price * (1.0 + slip)
                 entry_equity = cash  # 進場前權益（現金全押）
@@ -125,22 +140,23 @@ def buy_and_hold(
     fee: float = config.FEE_ONE_WAY,
     slip: float = config.SLIPPAGE,
     initial: float = config.INITIAL_CAPITAL,
+    execute_on: str = config.EXECUTE_ON,
 ) -> dict:
     """基準線：同標的、同期間、同起始資金。
 
-    於『第一個可成交 K 棒（i=1）的開盤』進場，扣一次手續費+滑價後抱到底。
-    與策略在每個分段內的起跑點對齊，確保公平比較。
+    於『第一個可成交 K 棒（i=1）』進場（用與策略相同的 execute_on 成交基準），
+    扣一次手續費+滑價後抱到底。與策略在每個分段內的起跑點對齊，確保公平比較。
     """
     _validate_costs(fee, slip)
     if len(df) < 2:
         raise ValueError("buy_and_hold(): 資料至少需 2 根 K 棒")
 
     idx = df.index
-    opens = df["open"].to_numpy(dtype=float)
+    fills = _fill_prices(df, execute_on)
     closes = df["close"].to_numpy(dtype=float)
     n = len(df)
 
-    buy_price = opens[1] * (1.0 + slip)
+    buy_price = fills[1] * (1.0 + slip)
     units = (initial * (1.0 - fee)) / buy_price
 
     equity = np.empty(n, dtype=float)

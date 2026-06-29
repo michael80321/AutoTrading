@@ -37,16 +37,18 @@ def _fmt(key: str, val) -> str:
     return str(val)
 
 
-def _warning_header(n_param_sets_tried: int) -> list[str]:
+def _warning_header(n_param_sets_tried: int, execute_on_actual: str | None = None) -> list[str]:
     """產生報表頂端三行警語。"""
     act = config.active_config()
+    exec_basis = execute_on_actual or act["EXECUTE_ON"]
+    exec_note = "" if exec_basis == act["EXECUTE_ON"] else "（來源為 close-only，自動改用次日收盤成交）"
     lines = []
     # 第 1 行：使用的參數
     lines.append(
         f"① 使用參數：SYMBOL={act['SYMBOL']} N={act['N']} "
         f"IS/OOS={act['IS_OOS_RATIO']:.0%}/{1-act['IS_OOS_RATIO']:.0%} "
         f"fee={act['FEE_ONE_WAY']*100:.2f}% slip={act['SLIPPAGE']*100:.3f}% "
-        f"成交={act['EXECUTE_ON']} 做空={act['ALLOW_SHORT']} 槓桿={act['ALLOW_LEVERAGE']}"
+        f"成交={exec_basis}{exec_note} 做空={act['ALLOW_SHORT']} 槓桿={act['ALLOW_LEVERAGE']}"
     )
     # 第 2 行：是否被改動過
     modified = config.modified_params()
@@ -87,13 +89,14 @@ def report(
     split_date,
     n_param_sets_tried: int = 1,
     tag: str = "BTCUSDT_N90",
+    execute_on_actual: str | None = None,
 ) -> dict:
     """產生完整報表。strat_*/bh_* 為 metrics() 的輸出 dict。
 
     回傳 {csv_path, plot_path, gap_table}。
     """
     _OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-    header = _warning_header(n_param_sets_tried)
+    header = _warning_header(n_param_sets_tried, execute_on_actual)
 
     # ── 終端輸出 ───────────────────────────────────────────────
     print("\n" + "=" * 78)
